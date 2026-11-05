@@ -227,15 +227,15 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
   };
 
   return (
-    <header className="shrink-0 flex items-center justify-between gap-3 px-4 lg:px-8 pt-3 pb-2 border-b border-border-subtle bg-surface/60 backdrop-blur-xl lg:bg-transparent lg:backdrop-blur-none z-20">
+    <header className="sticky top-0 shrink-0 flex items-center justify-between gap-3 px-4 lg:px-9 py-3 bg-transparent z-20">
       {/* Mobile menu button */}
       <div className="flex items-center gap-3 lg:hidden shrink-0">
         {showMenuButton && (
           <button
             onClick={onMenuClick}
-            className="text-text-main hover:text-primary transition-colors"
+            className="flex items-center justify-center size-9 rounded-full apple-glass-pill text-text-main hover:text-primary transition-colors"
           >
-            <span className="material-symbols-outlined">menu</span>
+            <span className="material-symbols-outlined text-[20px]">menu</span>
           </button>
         )}
       </div>
@@ -264,17 +264,17 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
                     {crumb.label}
                   </Link>
                 ) : (
-                  <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
                     {crumb.image && (
                       <ProviderIcon
                         src={crumb.image}
                         alt={crumb.label}
                         size={28}
-                        className="object-contain rounded max-w-[24px] max-h-[24px] sm:max-w-[28px] sm:max-h-[28px] shrink-0"
+                        className="object-contain rounded-lg max-w-[24px] max-h-[24px] sm:max-w-[28px] sm:max-h-[28px] shrink-0"
                         fallbackText={crumb.label.slice(0, 2).toUpperCase()}
                       />
                     )}
-                    <h1 className="text-base lg:text-2xl font-semibold text-text-main tracking-tight truncate">
+                    <h1 className="text-base lg:text-[22px] font-semibold text-text-main tracking-[-0.02em] truncate">
                       {translate(crumb.label)}
                     </h1>
                   </div>
@@ -284,18 +284,20 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
           </div>
         ) : title ? (
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               {icon && (
-                <span className="material-symbols-outlined text-primary text-xl lg:text-2xl">
-                  {icon}
-                </span>
+                <div className="flex items-center justify-center size-8 rounded-[10px] bg-primary/12 text-primary ">
+                  <span className="material-symbols-outlined text-[19px]">
+                    {icon}
+                  </span>
+                </div>
               )}
-              <h1 className="text-base lg:text-2xl font-semibold tracking-tight truncate">
+              <h1 className="text-base lg:text-[22px] font-semibold tracking-[-0.02em] text-text-main truncate">
                 {translate(title)}
               </h1>
             </div>
             {description && (
-              <p className="hidden lg:block text-sm text-text-muted truncate">
+              <p className="hidden lg:block text-[13px] text-text-muted truncate mt-0.5">
                 {translate(description)}
               </p>
             )}
@@ -303,11 +305,11 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
         ) : null}
       </div>
 
-      {/* Right actions */}
-      <div className="flex items-center gap-1 shrink-0">
+      {/* Right actions inside an Apple Glass Control Pill */}
+      <div className="flex items-center gap-1.5 shrink-0">
         {displayName && (loginMethod === "OIDC" || loginMethod === "SAML") && (
           <div
-            className="hidden sm:flex items-center max-w-[220px] px-3 py-1.5 rounded-full border border-border bg-surface/70 text-xs text-text-muted truncate"
+            className="hidden sm:flex items-center max-w-[220px] px-3 py-1.5 rounded-full apple-glass-pill text-xs text-text-muted truncate"
             title={displayName}
           >
             <span className="material-symbols-outlined text-[14px] mr-1.5 text-primary">person</span>
@@ -320,15 +322,17 @@ export default function Header({ onMenuClick, showMenuButton = true }) {
         <HeaderSearch />
         <button
           onClick={() => setDonateOpen(true)}
-          className="hidden sm:flex items-center gap-1.5 px-3 h-8 rounded-lg border border-pink-500/30 bg-pink-500/10 text-pink-600 dark:text-pink-400 hover:bg-pink-500/20 transition-colors text-sm font-medium"
+          className="hidden sm:flex items-center gap-1.5 px-3.5 h-8.5 rounded-full bg-surface-2 text-pink-600 dark:text-pink-300 hover:bg-pink-500/20  transition-all text-xs font-semibold active:scale-[0.97]"
           aria-label="Donate"
         >
-          <span className="material-symbols-outlined text-[18px]">volunteer_activism</span>
+          <span className="material-symbols-outlined text-[16px]">volunteer_activism</span>
           <span className="hidden sm:inline">Donate</span>
         </button>
-        <ThemeToggle />
-        <HeaderLanguage />
-        <HeaderMenu onLogout={handleLogout} />
+        <div className="flex items-center gap-0.5 rounded-full apple-glass-pill px-1 py-0.5">
+          <ThemeToggle />
+          <HeaderLanguage />
+          <HeaderMenu onLogout={handleLogout} />
+        </div>
       </div>
       <DonateModal isOpen={donateOpen} onClose={() => setDonateOpen(false)} />
     </header>
@@ -345,7 +349,7 @@ function HeaderSearch() {
 
   return (
     <div className="relative w-[160px] sm:w-[220px]">
-      <span className="material-symbols-outlined absolute left-2 top-1/2 -translate-y-1/2 text-text-muted text-[16px] pointer-events-none">
+      <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-text-muted text-[16px] pointer-events-none">
         search
       </span>
       <input
@@ -353,16 +357,16 @@ function HeaderSearch() {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder={placeholder}
-        className="w-full h-8 pl-7 pr-7 rounded-lg border border-border bg-surface/60 text-sm focus:outline-none focus:border-primary/50 transition-colors"
+        className="w-full h-8.5 pl-8 pr-7 rounded-full apple-glass-pill text-xs text-text-main placeholder:text-text-muted/70 focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all"
       />
       {query && (
         <button
           type="button"
           onClick={() => setQuery("")}
-          className="absolute right-1 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-main p-0.5 rounded"
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-main p-0.5 rounded-full"
           aria-label="Clear search"
         >
-          <span className="material-symbols-outlined text-[16px]">close</span>
+          <span className="material-symbols-outlined text-[15px]">close</span>
         </button>
       )}
     </div>

@@ -104,42 +104,48 @@ export default function Sidebar({ onClose }) {
     setShutdownCountdown(0);
   };
 
-  // Note: legacy updater poll removed. New flow: copy install cmd + shutdown server,
-  // user runs the command manually in another terminal.
-
+  const navItemClass = (active) =>
+    cn(
+      "flex items-center gap-3 px-3.5 py-2 rounded-[12px] transition-all duration-200 group relative",
+      active
+        ? "liquid-active text-primary font-semibold"
+        : "text-text-main/75 hover:bg-white/30 dark:hover:bg-white/[0.06] hover:text-text-main font-medium"
+    );
 
   return (
     <>
-      <aside className="flex w-72 flex-col border-r border-border-subtle bg-vibrancy backdrop-blur-xl transition-colors duration-300 min-h-full">
-        {/* Traffic lights */}
+      <aside className="flex w-72 flex-col bg-sidebar liquid-sidebar transition-colors duration-300 h-full min-h-0 rounded-[28px] select-none">
+        {/* macOS Sequoia Traffic lights */}
         <div className="flex items-center gap-2 px-6 pt-5 pb-2">
-          <div className="w-3 h-3 rounded-full bg-[#FF5F56]" />
-          <div className="w-3 h-3 rounded-full bg-[#FFBD2E]" />
-          <div className="w-3 h-3 rounded-full bg-[#27C93F]" />
+          <div className="w-3 h-3 rounded-full bg-[#FF5F56] border border-[#E0443E]/60 shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.55),0_1px_2px_rgba(0,0,0,0.12)]" />
+          <div className="w-3 h-3 rounded-full bg-[#FFBD2E] border border-[#DEA123]/60 shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.55),0_1px_2px_rgba(0,0,0,0.12)]" />
+          <div className="w-3 h-3 rounded-full bg-[#27C93F] border border-[#1AAB29]/60 shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.55),0_1px_2px_rgba(0,0,0,0.12)]" />
         </div>
 
-        {/* Logo */}
-        <div className="px-6 py-4 flex flex-col gap-2">
-          <Link href="/dashboard" className="flex items-center gap-3">
-            <div className="flex items-center justify-center size-9 rounded-[10px] bg-gradient-to-br from-brand-500 to-brand-700 shadow-[var(--shadow-warm)]">
-              <span className="material-symbols-outlined text-white text-[20px]">hub</span>
+        {/* Brand Identity */}
+        <div className="px-6 py-4 flex flex-col gap-2.5">
+          <Link href="/dashboard" className="flex items-center gap-3.5 group">
+            <div className="flex items-center justify-center size-10 rounded-[12px] bg-brand-500 group-hover:scale-[1.03] transition-transform duration-200">
+              <span className="material-symbols-outlined text-white text-[21px] drop-shadow-xs">hub</span>
             </div>
             <div className="flex flex-col">
-              <h1 className="text-lg font-semibold tracking-tight text-text-main">
+              <h1 className="text-[17px] font-semibold tracking-tight text-text-main leading-tight">
                 {APP_CONFIG.name}
               </h1>
-              <span className="text-xs text-text-muted">v{APP_CONFIG.version}</span>
+              <span className="text-[11px] font-medium text-text-muted/85">
+                v{APP_CONFIG.version}
+              </span>
             </div>
           </Link>
           {updateInfo && (
-            <div className="flex flex-col gap-1.5 rounded p-1 -m-1">
-              <span className="text-xs font-semibold text-green-600 dark:text-amber-500">
+            <div className="flex flex-col gap-1.5 rounded-xl bg-emerald-500/10 dark:bg-amber-500/10 border border-emerald-500/20 dark:border-amber-500/20 p-2.5 mt-1 backdrop-blur-md">
+              <span className="text-xs font-semibold text-emerald-700 dark:text-amber-400">
                 ↑ New version available: v{updateInfo.latestVersion}
               </span>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setShowUpdateModal(true)}
-                  className="px-2 py-1 rounded bg-green-600 hover:bg-green-700 dark:bg-amber-500 dark:hover:bg-amber-600 text-white text-[11px] font-semibold transition-colors cursor-pointer"
+                  className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-amber-500 dark:hover:bg-amber-600 text-white text-[11px] font-semibold shadow-xs transition-colors cursor-pointer"
                 >
                   Update now
                 </button>
@@ -148,7 +154,7 @@ export default function Sidebar({ onClose }) {
                   title="Copy install command"
                   className="flex-1 text-left hover:opacity-80 transition-opacity cursor-pointer min-w-0"
                 >
-                  <code className="block text-[10px] text-green-600/80 dark:text-amber-400/70 font-mono truncate">
+                  <code className="block text-[10px] text-emerald-700/80 dark:text-amber-300/80 font-mono truncate">
                     {copied ? "✓ copied!" : INSTALL_CMD}
                   </code>
                 </button>
@@ -158,34 +164,32 @@ export default function Sidebar({ onClose }) {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-4 py-2 space-y-0.5 overflow-y-auto custom-scrollbar">
-          {navItems.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={onClose}
-              className={cn(
-                "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group",
-                isActive(item.href)
-                  ? "bg-primary/10 text-primary"
-                  : "text-text-muted hover:bg-surface-2 hover:text-text-main"
-              )}
-            >
-              <span
-                className={cn(
-                  "material-symbols-outlined text-[18px]",
-                  isActive(item.href) ? "fill-1" : "group-hover:text-primary transition-colors"
-                )}
+        <nav className="flex-1 px-3.5 py-2 space-y-1 overflow-y-auto custom-scrollbar">
+          {navItems.map((item) => {
+            const active = isActive(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={onClose}
+                className={navItemClass(active)}
               >
-                {item.icon}
-              </span>
-              <span className="text-[13px] font-medium">{item.label}</span>
-            </Link>
-          ))}
+                <span
+                  className={cn(
+                    "material-symbols-outlined text-[19px] transition-transform duration-200 group-hover:scale-105",
+                    active ? "fill-1 text-primary" : "text-text-muted group-hover:text-primary transition-colors"
+                  )}
+                >
+                  {item.icon}
+                </span>
+                <span className="text-[13.5px] tracking-[-0.01em]">{item.label}</span>
+              </Link>
+            );
+          })}
 
           {/* System section */}
-          <div className="pt-3 mt-2 space-y-0.5">
-            <p className="px-4 text-xs font-semibold text-text-muted/60 uppercase tracking-wider mb-2">
+          <div className="pt-4 mt-3 space-y-1">
+            <p className="px-3.5 text-[10.5px] font-semibold text-text-muted/65 uppercase tracking-[0.08em] mb-1.5">
               System
             </p>
 
@@ -193,101 +197,99 @@ export default function Sidebar({ onClose }) {
             <button
               onClick={() => setMediaOpen((v) => !v)}
               className={cn(
-                "w-full flex items-center gap-3 px-3 py-1 rounded-lg transition-all group",
-                pathname.startsWith("/dashboard/media-providers")
-                  ? "bg-primary/10 text-primary"
-                  : "text-text-muted hover:bg-surface-2 hover:text-text-main"
+                "w-full",
+                navItemClass(pathname.startsWith("/dashboard/media-providers"))
               )}
             >
-              <span className="material-symbols-outlined text-[18px]">perm_media</span>
-              <span className="text-[13px] font-medium flex-1 text-left">Media Providers</span>
-              <span className="material-symbols-outlined text-[14px] transition-transform" style={{ transform: mediaOpen ? "rotate(180deg)" : "rotate(0deg)" }}>
+              <span className="material-symbols-outlined text-[19px]">perm_media</span>
+              <span className="text-[13.5px] tracking-[-0.01em] flex-1 text-left">Media Providers</span>
+              <span
+                className="material-symbols-outlined text-[16px] transition-transform duration-200"
+                style={{ transform: mediaOpen ? "rotate(180deg)" : "rotate(0deg)" }}
+              >
                 expand_more
               </span>
             </button>
             {mediaOpen && (
-              <div className="pl-4">
-                {MEDIA_PROVIDER_KINDS.filter((k) => VISIBLE_MEDIA_KINDS.includes(k.id)).map((kind) => (
-                  <Link
-                    key={kind.id}
-                    href={`/dashboard/media-providers/${kind.id}`}
-                    onClick={onClose}
-                    className={cn(
-                      "flex items-center gap-3 px-4 py-1 rounded-lg transition-all group",
-                      pathname.startsWith(`/dashboard/media-providers/${kind.id}`)
-                        ? "bg-primary/10 text-primary"
-                        : "text-text-muted hover:bg-surface-2 hover:text-text-main"
-                    )}
-                  >
-                    <span className="material-symbols-outlined text-[16px]">{kind.icon}</span>
-                    <span className="text-sm">{kind.label}</span>
-                  </Link>
-                ))}
+              <div className="pl-3.5 space-y-0.5 pt-0.5">
+                {MEDIA_PROVIDER_KINDS.filter((k) => VISIBLE_MEDIA_KINDS.includes(k.id)).map((kind) => {
+                  const subActive = pathname.startsWith(`/dashboard/media-providers/${kind.id}`);
+                  return (
+                    <Link
+                      key={kind.id}
+                      href={`/dashboard/media-providers/${kind.id}`}
+                      onClick={onClose}
+                      className={cn(
+                        "flex items-center gap-3 px-3.5 py-1.5 rounded-[11px] transition-all duration-150 group",
+                        subActive
+                          ? "liquid-active text-primary font-semibold"
+                          : "text-text-main/75 hover:bg-white/30 dark:hover:bg-white/[0.06] hover:text-text-main"
+                      )}
+                    >
+                      <span className="material-symbols-outlined text-[16px]">{kind.icon}</span>
+                      <span className="text-[13px]">{kind.label}</span>
+                    </Link>
+                  );
+                })}
                 <Link
                   key={COMBINED_WEB_ITEM.id}
                   href={COMBINED_WEB_ITEM.href}
                   onClick={onClose}
                   className={cn(
-                    "flex items-center gap-3 px-4 py-1 rounded-lg transition-all group",
+                    "flex items-center gap-3 px-3.5 py-1.5 rounded-[11px] transition-all duration-150 group",
                     pathname.startsWith(COMBINED_WEB_ITEM.href)
-                      ? "bg-primary/10 text-primary"
-                      : "text-text-muted hover:bg-surface-2 hover:text-text-main"
+                      ? "liquid-active text-primary font-semibold"
+                      : "text-text-main/75 hover:bg-white/30 dark:hover:bg-white/[0.06] hover:text-text-main"
                   )}
                 >
                   <span className="material-symbols-outlined text-[16px]">{COMBINED_WEB_ITEM.icon}</span>
-                  <span className="text-sm">{COMBINED_WEB_ITEM.label}</span>
+                  <span className="text-[13px]">{COMBINED_WEB_ITEM.label}</span>
                 </Link>
               </div>
             )}
 
-            {systemItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={onClose}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group",
-                  isActive(item.href)
-                    ? "bg-primary/10 text-primary"
-                    : "text-text-muted hover:bg-surface-2 hover:text-text-main"
-                )}
-              >
-                <span
-                  className={cn(
-                    "material-symbols-outlined text-[18px]",
-                    isActive(item.href) ? "fill-1" : "group-hover:text-primary transition-colors"
-                  )}
+            {systemItems.map((item) => {
+              const active = isActive(item.href);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={onClose}
+                  className={navItemClass(active)}
                 >
-                  {item.icon}
-                </span>
-                <span className="text-[13px] font-medium">{item.label}</span>
-              </Link>
-            ))}
+                  <span
+                    className={cn(
+                      "material-symbols-outlined text-[19px]",
+                      active ? "fill-1 text-primary" : "group-hover:text-primary transition-colors"
+                    )}
+                  >
+                    {item.icon}
+                  </span>
+                  <span className="text-[13.5px] tracking-[-0.01em]">{item.label}</span>
+                </Link>
+              );
+            })}
 
             {/* Debug items (inside System section, before Settings) */}
             {debugItems.map((item) => {
               const show = item.href !== "/dashboard/translator" || enableTranslator;
+              const active = isActive(item.href);
               return show ? (
                 <Link
                   key={item.href}
                   href={item.href}
                   onClick={onClose}
-                  className={cn(
-                    "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group",
-                    isActive(item.href)
-                      ? "bg-primary/10 text-primary"
-                      : "text-text-muted hover:bg-surface-2 hover:text-text-main"
-                  )}
+                  className={navItemClass(active)}
                 >
                   <span
                     className={cn(
-                      "material-symbols-outlined text-[18px]",
-                      isActive(item.href) ? "fill-1" : "group-hover:text-primary transition-colors"
+                      "material-symbols-outlined text-[19px]",
+                      active ? "fill-1 text-primary" : "group-hover:text-primary transition-colors"
                     )}
                   >
                     {item.icon}
                   </span>
-                  <span className="text-[13px] font-medium">{item.label}</span>
+                  <span className="text-[13.5px] tracking-[-0.01em]">{item.label}</span>
                 </Link>
               ) : null;
             })}
@@ -298,16 +300,13 @@ export default function Sidebar({ onClose }) {
               target="_blank"
               rel="noreferrer"
               onClick={onClose}
-              className={cn(
-                "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group w-full",
-                "text-text-muted hover:bg-surface-2 hover:text-text-main"
-              )}
+              className={cn("w-full", navItemClass(false))}
             >
-              <span className="material-symbols-outlined text-[18px] group-hover:text-primary transition-colors">
+              <span className="material-symbols-outlined text-[19px] group-hover:text-primary transition-colors">
                 computer
               </span>
-              <span className="text-[13px] font-medium">9Remote</span>
-              <span className="ml-auto text-[10px] font-semibold px-1.5 py-0.5 rounded-[3px] bg-orange-500/15 text-orange-400">
+              <span className="text-[13.5px] tracking-[-0.01em]">9Remote</span>
+              <span className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full bg-brand-500/15 text-brand-600 dark:text-brand-300 ring-1 ring-brand-500/25">
                 HOT
               </span>
             </a>
@@ -318,43 +317,33 @@ export default function Sidebar({ onClose }) {
               target="_blank"
               rel="noreferrer"
               onClick={onClose}
-              className={cn(
-                "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group w-full",
-                "text-text-muted hover:bg-surface-2 hover:text-text-main"
-              )}
+              className={cn("w-full", navItemClass(false))}
             >
-              <span className="material-symbols-outlined text-[18px] group-hover:text-primary transition-colors">
+              <span className="material-symbols-outlined text-[19px] group-hover:text-primary transition-colors">
                 translate
               </span>
-              <span className="text-[13px] font-medium">9English</span>
+              <span className="text-[13.5px] tracking-[-0.01em]">9English</span>
             </a>
 
             {/* Settings */}
             <Link
               href="/dashboard/profile"
               onClick={onClose}
-              className={cn(
-                "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group",
-                isActive("/dashboard/profile")
-                  ? "bg-primary/10 text-primary"
-                  : "text-text-muted hover:bg-surface-2 hover:text-text-main"
-              )}
+              className={navItemClass(isActive("/dashboard/profile"))}
             >
               <span
                 className={cn(
-                  "material-symbols-outlined text-[18px]",
-                  isActive("/dashboard/profile") ? "fill-1" : "group-hover:text-primary transition-colors"
+                  "material-symbols-outlined text-[19px]",
+                  isActive("/dashboard/profile") ? "fill-1 text-primary" : "group-hover:text-primary transition-colors"
                 )}
               >
                 settings
               </span>
-              <span className="text-[13px] font-medium">Settings</span>
+              <span className="text-[13.5px] tracking-[-0.01em]">Settings</span>
             </Link>
           </div>
         </nav>
-
       </aside>
-
 
       {/* Update Confirmation Modal */}
       <ConfirmModal
@@ -370,7 +359,7 @@ export default function Sidebar({ onClose }) {
 
       {/* Disconnected / Updating Overlay */}
       {(isDisconnected || isUpdating) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6">
           {isUpdating ? (
             <ManualUpdatePanel
               latestVersion={updateInfo?.latestVersion}
@@ -382,11 +371,11 @@ export default function Sidebar({ onClose }) {
               isDisconnected={isDisconnected}
             />
           ) : (
-            <div className="text-center p-8">
+            <div className="text-center p-8 rounded-3xl apple-glass-elev max-w-sm">
               <div className="flex items-center justify-center size-16 rounded-full bg-red-500/20 text-red-500 mx-auto mb-4">
                 <span className="material-symbols-outlined text-[32px]">power_off</span>
               </div>
-              <h2 className="text-xl font-semibold text-white mb-2">Server Disconnected</h2>
+              <h2 className="text-xl font-semibold text-text-main mb-2">Server Disconnected</h2>
               <p className="text-text-muted mb-6">The proxy server has been stopped.</p>
               <Button variant="secondary" onClick={() => globalThis.location.reload()}>
                 Reload Page
@@ -406,7 +395,7 @@ Sidebar.propTypes = {
 function ManualUpdatePanel({ latestVersion, installCmd, copied, onCopyAndShutdown, onCancel, countdown, isDisconnected }) {
   const isCountingDown = countdown > 0;
   return (
-    <div className="w-full max-w-lg rounded-xl bg-neutral-900/95 border border-white/10 p-6 text-white">
+    <div className="w-full max-w-lg rounded-3xl bg-neutral-900 border border-white/15 p-6 text-white shadow-2xl">
       <div className="flex items-center gap-3 mb-4">
         <div className="flex items-center justify-center size-11 rounded-full bg-amber-500/20 text-amber-400">
           <span className="material-symbols-outlined text-[24px]">content_copy</span>
@@ -424,7 +413,7 @@ function ManualUpdatePanel({ latestVersion, installCmd, copied, onCopyAndShutdow
       </div>
 
       <p className="text-sm text-white/80 mb-2">Install command:</p>
-      <div className="w-full px-3 py-2 rounded bg-white/5 mb-4">
+      <div className="w-full px-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 mb-4">
         <code className="text-xs font-mono text-amber-400 break-all">{installCmd}</code>
       </div>
 

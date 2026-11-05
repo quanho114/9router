@@ -52,7 +52,7 @@ function MediaProviderCard({ provider, kind, connections, isCustom, onToggle }) 
     <Link href={`/dashboard/media-providers/${kind}/${provider.id}`} className="group">
       <Card
         padding="xs"
-        className={`h-full hover:bg-black/[0.01] dark:hover:bg-white/[0.01] transition-colors cursor-pointer ${allDisabled ? "opacity-50" : ""}`}
+        className={`h-full !bg-transparent !shadow-none !backdrop-blur-none hover:!bg-black/[0.04] dark:hover:!bg-white/[0.06] transition-colors cursor-pointer ${allDisabled ? "opacity-50" : ""}`}
       >
         <div className="flex min-w-0 items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">

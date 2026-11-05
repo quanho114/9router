@@ -39,7 +39,7 @@ export default function Toggle({
           "relative inline-flex shrink-0 cursor-pointer rounded-full",
           "transition-colors duration-200 ease-in-out",
           "focus:outline-none focus:ring-2 focus:ring-brand-500/30",
-          checked ? "bg-brand-500" : "bg-surface-3",
+          checked ? "bg-success" : "bg-surface-3",
           sizes[size].track,
           disabled && "cursor-not-allowed"
         )}

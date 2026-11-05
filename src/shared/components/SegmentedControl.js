@@ -31,7 +31,7 @@ export default function SegmentedControl({
             "shrink-0 px-4 rounded-[8px] font-medium transition-all",
             sizes[size],
             value === option.value
-              ? "bg-surface text-text-main shadow-sm"
+              ? "liquid-active text-text-main"
               : "text-text-muted hover:text-text-main"
           )}
         >
