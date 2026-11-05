@@ -78,7 +78,7 @@ export function exportSnapshotFromAdapter(adapter) {
   const proxyPools = adapter.all(`SELECT * FROM proxyPools`);
   const apiKeys = adapter.all(`SELECT * FROM apiKeys`);
   const combos = adapter.all(`SELECT * FROM combos`);
-  const kv = adapter.all(`SELECT scope, key, value FROM kv`);
+  const kv = adapter.all(`SELECT scope, key, value FROM kv WHERE scope != 'gemini_thought_signatures'`);
   const usageDaily = adapter.all(`SELECT dateKey, data FROM usageDaily`);
   const meta = adapter.all(`SELECT key, value FROM _meta`);
 
@@ -225,8 +225,9 @@ export function applySnapshotToAdapter(adapter, snapshot) {
       }
 
       if (Array.isArray(t.kv)) {
-        adapter.run(`DELETE FROM kv`);
+        adapter.run(`DELETE FROM kv WHERE scope != 'gemini_thought_signatures'`);
         for (const r of t.kv) {
+          if (r.scope === "gemini_thought_signatures") continue;
           adapter.run(
             `INSERT OR REPLACE INTO kv(scope, key, value) VALUES(?, ?, ?)`,
             [
@@ -488,18 +489,25 @@ export function scheduleSupabasePush(adapter) {
  * Wrap a SQLite adapter so any mutation on core tables triggers a debounced push to Supabase.
  */
 export function withSupabaseSync(adapter) {
+  const shouldSync = (sql, params) => {
+    if (syncState.isApplyingRemote) return false;
+    if (!SYNCED_TABLES_RE.test(sql)) return false;
+    if (sql.includes("gemini_thought_signatures")) return false;
+    if (Array.isArray(params) && params[0] === "gemini_thought_signatures") return false;
+    return true;
+  };
   return {
     ...adapter,
     run(sql, params = []) {
       const result = adapter.run(sql, params);
-      if (!syncState.isApplyingRemote && SYNCED_TABLES_RE.test(sql)) {
+      if (shouldSync(sql, params)) {
         scheduleSupabasePush(adapter);
       }
       return result;
     },
     exec(sql) {
       const result = adapter.exec(sql);
-      if (!syncState.isApplyingRemote && SYNCED_TABLES_RE.test(sql)) {
+      if (shouldSync(sql, [])) {
         scheduleSupabasePush(adapter);
       }
       return result;
