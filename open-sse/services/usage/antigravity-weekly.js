@@ -28,6 +28,11 @@ export function _clearWeeklyCache() {
 // — Group-name and window to stable key mapping ——————————————————————
 const GROUP_CONFIGS = [
   {
+    pattern: /argon/i,
+    weekly: { key: "argon_weekly", displayName: "Gemini 4 Argon (Weekly)" },
+    session: { key: "argon_session", displayName: "Gemini 4 Argon (5h)" },
+  },
+  {
     pattern: /gemini/i,
     weekly: { key: "gemini_weekly", displayName: "Gemini (Weekly)" },
     session: { key: "gemini_session", displayName: "Gemini (5h)" },
@@ -44,7 +49,7 @@ const GROUP_CONFIGS = [
  * Pure function — safe to unit-test without network.
  *
  * @param {Object|null} data  Raw JSON response
- * @returns {Object}  e.g. { gemini_weekly: { used, total, ... }, claude_gpt_weekly: { ... } }
+ * @returns {Object}  e.g. { argon_weekly: { ... }, gemini_weekly: { used, total, ... }, claude_gpt_weekly: { ... } }
  */
 export function parseWeeklyQuotaSummary(data) {
   if (!data || typeof data !== "object") return {};
@@ -85,7 +90,7 @@ export function parseWeeklyQuotaSummary(data) {
 
       // Match group to a known family
       for (const config of GROUP_CONFIGS) {
-        if (config.pattern.test(displayName)) {
+        if (config.pattern.test(displayName) || config.pattern.test(bucketText)) {
           const target = isWeekly ? config.weekly : config.session;
           if (result[target.key]) break; // first matching bucket per type wins
 

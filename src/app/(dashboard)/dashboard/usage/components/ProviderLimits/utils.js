@@ -382,20 +382,62 @@ export function parseQuotaData(provider, data) {
       case "antigravity":
         if (data.quotas) {
           const entries = Object.entries(data.quotas);
-          const weeklyKeys = new Set(["gemini_weekly", "claude_gpt_weekly"]);
-          const sessionKeys = new Set(["gemini_session", "claude_gpt_session"]);
+          const weeklyKeys = new Set(["argon_weekly", "gemini_weekly", "claude_gpt_weekly"]);
+          const sessionKeys = new Set(["argon_session", "gemini_session", "claude_gpt_session"]);
           const summaryKeys = new Set([...weeklyKeys, ...sessionKeys]);
-          const geminiModels = entries.filter(([k]) => k.startsWith("gemini-") && !k.includes("image"));
+          const argonModels = entries.filter(([k]) => k.includes("argon") && !summaryKeys.has(k));
+          const geminiModels = entries.filter(([k]) => k.startsWith("gemini-") && !k.includes("image") && !k.includes("argon"));
           const claudeModels = entries.filter(([k]) => k.startsWith("claude-"));
           const imageModels = entries.filter(([k]) => k.includes("image"));
           const summaryModels = entries.filter(([k]) => summaryKeys.has(k));
-          const otherModels = entries.filter(([k]) => !k.startsWith("gemini-") && !k.startsWith("claude-") && !k.includes("image") && !summaryKeys.has(k));
+          const otherModels = entries.filter(([k]) => !k.startsWith("gemini-") && !k.startsWith("claude-") && !k.includes("image") && !k.includes("argon") && !summaryKeys.has(k));
 
           // Summary keys from retrieveUserQuotaSummary
+          const hasArgonWeekly = Boolean(data.quotas.argon_weekly);
+          const hasArgonSession = Boolean(data.quotas.argon_session);
           const hasGeminiWeekly = Boolean(data.quotas.gemini_weekly);
           const hasGeminiSession = Boolean(data.quotas.gemini_session);
           const hasClaudeWeekly = Boolean(data.quotas.claude_gpt_weekly);
           const hasClaudeSession = Boolean(data.quotas.claude_gpt_session);
+
+          // 0. Gemini 4 Argon Family:
+          if (hasArgonSession) {
+            summaryModels.filter(([k]) => k === "argon_session").forEach(([modelKey, quota]) => {
+              normalizedQuotas.push({
+                name: quota.displayName || modelKey,
+                modelKey,
+                used: quota.used || 0,
+                total: quota.total || 0,
+                resetAt: quota.resetAt || null,
+                remainingPercentage: quota.remainingPercentage,
+              });
+            });
+          } else if (argonModels.length > 0 && !hasArgonWeekly) {
+            const rep = argonModels.reduce((min, cur) =>
+              (cur[1].remainingPercentage ?? 100) < (min[1].remainingPercentage ?? 100) ? cur : min
+            )[1];
+            normalizedQuotas.push({
+              name: "Gemini 4 Argon",
+              modelKey: "argon",
+              used: rep.used || 0,
+              total: rep.total || 0,
+              resetAt: rep.resetAt || null,
+              remainingPercentage: rep.remainingPercentage,
+            });
+          }
+
+          if (hasArgonWeekly) {
+            summaryModels.filter(([k]) => k === "argon_weekly").forEach(([modelKey, quota]) => {
+              normalizedQuotas.push({
+                name: quota.displayName || modelKey,
+                modelKey,
+                used: quota.used || 0,
+                total: quota.total || 0,
+                resetAt: quota.resetAt || null,
+                remainingPercentage: quota.remainingPercentage,
+              });
+            });
+          }
 
           // 1. Gemini Family:
           if (hasGeminiSession) {
@@ -558,18 +600,6 @@ export function parseQuotaData(provider, data) {
 
       case "qoder":
       case "qoder-cn":
-        // Qoder ships a `user` quota, an optional `organization` quota and —
-        // when the account has redeemed a free-credit promo — an `addOn`
-        // bucket. All share the shape {total, used, remaining, unit, resetAt}.
-        // Skip any bucket whose total is 0: `personal_standard` accounts
-        // report `user` as 0/0 (their grant lives in `addOn`) and most
-        // accounts never have an organization bucket, so rendering "0/0"
-        // rows is noise. Buckets holding an actual grant always have
-        // total > 0 and are kept.
-        // Don't forward Qoder's `remaining` field: it's an absolute credit
-        // count, but getRemainingPercentage / QuotaTable interpret
-        // `remaining` as a 0-100 percentage and would render 348 credits
-        // as "348%". The percentage is computed from used/total instead.
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([quotaType, quota]) => {
             if (!quota || (Number(quota.total) || 0) === 0) {
@@ -588,11 +618,7 @@ export function parseQuotaData(provider, data) {
               total: quota.total || 0,
               unit: quota.unit,
               resetAt: quota.resetAt || null,
-              // Qoder reports open-ended plans as a 9999 sentinel; the service
-              // turns that into neverExpires so the row can read
-              // "Never expires" instead of "N/A" or a year-9999 date.
               neverExpires: quota.neverExpires === true,
-              // Present on add-on credits: links to Qoder's own usage page.
               detailUrl: quota.detailUrl || null,
             });
           });
@@ -601,7 +627,6 @@ export function parseQuotaData(provider, data) {
 
       case "claude":
         if (data.message) {
-          // Handle error message case
           normalizedQuotas.push({
             name: "error",
             used: 0,
@@ -624,10 +649,6 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "vercel-ai-gateway":
-        // Vercel returns currency credit balance, not request quotas.
-        // The 'Remaining (USD)' row needs explicit remainingPercentage because
-        // its used/total values would otherwise compute the wrong direction
-        // (e.g. used=95.5 / total=100 → 4% instead of 96%).
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
@@ -643,10 +664,6 @@ export function parseQuotaData(provider, data) {
 
       case "codebuddy-cn":
       case "codebuddy-intl":
-        // CodeBuddy CN/Intl mix recurring refill packs ("Monthly"/"Weekly"/...)
-        // with one-shot bonus packs ("Bonus Pack N"). Forward `recurring`
-        // so the UI can show "Expires in" for bonus packs (whose resetAt is
-        // a hard expiry, not a refresh) instead of "Reset in".
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
@@ -661,9 +678,6 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "grok-cli":
-        // Grok Build credits (on-demand window + prepaid balance).
-        // Do NOT forward absolute `remaining` — getRemainingPercentage treats
-        // it as a 0–100 percentage (same as Qoder). Use remainingPercentage.
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
@@ -678,7 +692,6 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "kimi":
-        // Weekly / Ratelimit from /v1/usages. Prefer remainingPercentage only.
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
@@ -693,7 +706,6 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "deepseek":
-        // Credit balance — remainingPercentage only (no absolute remaining).
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
@@ -710,8 +722,6 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "cursor":
-        // Plan spend is USD (cents from GetCurrentPeriodUsage). Forward
-        // remainingPercentage only — do not pass absolute remaining (UI treats it as %).
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
@@ -726,8 +736,6 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "groq":
-        // Requests/Tokens rate-limit windows from response headers — absolute
-        // used/total (calculatePercentage derives the bar), like Codex/Kiro.
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
@@ -741,8 +749,6 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "ollama":
-        // Session (5h) / Weekly (7d) / Monthly usage % from ollama.com/api/balance (or /api/usage).
-        // remainingPercentage only — no absolute remaining (UI treats remaining as %).
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
@@ -761,7 +767,6 @@ export function parseQuotaData(provider, data) {
         break;
 
       case "zed":
-        // Edit predictions + optional hosted model_requests; unlimited uses remainingPercentage.
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
@@ -778,9 +783,6 @@ export function parseQuotaData(provider, data) {
 
       case "minimax-code":
       case "minimax-code-global":
-        // Service already returns dashboard-shaped rows: a credits balance
-        // (isCreditBalance → 💰 with the amount as total) plus M Plan rate
-        // windows as 0-100 percent rows. Pass through, preserving extras.
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
@@ -799,7 +801,6 @@ export function parseQuotaData(provider, data) {
         break;
 
       default:
-        // Generic fallback for unknown providers
         if (data.quotas) {
           Object.entries(data.quotas).forEach(([name, quota]) => {
             normalizedQuotas.push({
@@ -841,9 +842,15 @@ export function parseQuotaData(provider, data) {
       // Use modelKey for antigravity (mapped to family anchor), otherwise use name
       let keyA = a.modelKey || a.name;
       let keyB = b.modelKey || b.name;
+      if (keyA === "argon" || keyA === "argon_session") keyA = "gemini-4-argon-high";
+      if (keyA === "argon_weekly") keyA = "gemini-4-argon-low";
       if (keyA === "gemini" || keyA === "gemini_session") keyA = "gemini-3.8-flash-high";
+      if (keyA === "gemini_weekly") keyA = "gemini-3.8-flash-low";
       if (keyA === "claude" || keyA === "claude_gpt_session") keyA = "claude-sonnet-4-6";
+      if (keyB === "argon" || keyB === "argon_session") keyB = "gemini-4-argon-high";
+      if (keyB === "argon_weekly") keyB = "gemini-4-argon-low";
       if (keyB === "gemini" || keyB === "gemini_session") keyB = "gemini-3.8-flash-high";
+      if (keyB === "gemini_weekly") keyB = "gemini-3.8-flash-low";
       if (keyB === "claude" || keyB === "claude_gpt_session") keyB = "claude-sonnet-4-6";
       const orderA = orderMap.get(keyA) ?? 999;
       const orderB = orderMap.get(keyB) ?? 999;

@@ -50,13 +50,16 @@ function applyActiveStrikeBlocks(connectionId, quotas) {
 }
 
 /**
- * Get model family for Antigravity models ("claude_gpt" or "gemini").
+ * Get model family for Antigravity models ("claude_gpt", "argon", or "gemini").
  */
 export function getAntigravityModelFamily(model) {
   if (!model || typeof model !== "string") return null;
   const clean = (model.includes("/") ? model.slice(model.indexOf("/") + 1) : model).toLowerCase();
   if (clean.startsWith("claude-") || clean.startsWith("gpt-") || clean === "claude") {
     return "claude_gpt";
+  }
+  if (clean.includes("argon")) {
+    return "argon";
   }
   if ((clean.startsWith("gemini-") && !clean.includes("image")) || clean === "gemini") {
     return "gemini";
@@ -85,6 +88,9 @@ export function getAntigravityModelQuota(quotas, model) {
   }
 
   // 2. Direct tier aliases if base model was passed
+  if ((cleanModel === "gemini-4-argon" || cleanModel === "argon-4") && quotas["gemini-4-argon-medium"]) {
+    candidates.push(quotas["gemini-4-argon-medium"]);
+  }
   if (cleanModel === "claude-sonnet-5-5" && quotas["claude-sonnet-5-5-high"]) {
     candidates.push(quotas["claude-sonnet-5-5-high"]);
   }
@@ -105,6 +111,13 @@ export function getAntigravityModelQuota(quotas, model) {
   if (family === "claude_gpt") {
     if (quotas.claude_gpt_session) candidates.push(quotas.claude_gpt_session);
     if (quotas.claude_gpt_weekly) candidates.push(quotas.claude_gpt_weekly);
+  } else if (family === "argon") {
+    if (quotas.argon_session) candidates.push(quotas.argon_session);
+    if (quotas.argon_weekly) candidates.push(quotas.argon_weekly);
+    if (!quotas.argon_session && !quotas.argon_weekly) {
+      if (quotas.gemini_session) candidates.push(quotas.gemini_session);
+      if (quotas.gemini_weekly) candidates.push(quotas.gemini_weekly);
+    }
   } else if (family === "gemini") {
     if (quotas.gemini_session) candidates.push(quotas.gemini_session);
     if (quotas.gemini_weekly) candidates.push(quotas.gemini_weekly);
@@ -168,6 +181,8 @@ export function clearAntigravityStrikes(connectionId, model) {
   const family = getAntigravityModelFamily(model);
   if (family === "claude_gpt" && cached?.claude_gpt_session?.resetAt === iso) {
     delete cached.claude_gpt_session;
+  } else if (family === "argon" && cached?.argon_session?.resetAt === iso) {
+    delete cached.argon_session;
   } else if (family === "gemini" && cached?.gemini_session?.resetAt === iso) {
     delete cached.gemini_session;
   }
