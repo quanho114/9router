@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { formatResetTime, getRemainingPercentage } from "./utils";
 
 const PAGE_SIZE = 10;
@@ -45,19 +45,17 @@ function formatResetTimeDisplay(resetTime) {
 function getColorClasses(remainingPercentage) {
   if (remainingPercentage > 70) {
     return {
-      text: "text-green-600 dark:text-green-400",
-      bg: "bg-green-500",
-      bgLight: "bg-green-500/10",
-      emoji: "🟢",
+      text: "text-text-primary",
+      bg: "bg-emerald-600",
+      bgLight: "bg-emerald-600/10",
     };
   }
 
   if (remainingPercentage >= 30) {
     return {
-      text: "text-yellow-600 dark:text-yellow-400",
-      bg: "bg-yellow-500",
-      bgLight: "bg-yellow-500/10",
-      emoji: "🟡",
+      text: "text-amber-700 dark:text-amber-400",
+      bg: "bg-amber-500",
+      bgLight: "bg-amber-500/10",
     };
   }
 
@@ -65,7 +63,6 @@ function getColorClasses(remainingPercentage) {
     text: "text-red-600 dark:text-red-400",
     bg: "bg-red-500",
     bgLight: "bg-red-500/10",
-    emoji: "🔴",
   };
 }
 
@@ -91,7 +88,7 @@ export default function QuotaTable({
   showSortLabel = false,
   onHideQuota = null,
 }) {
-  const [page, setPage] = useState(1);
+  const [paginationState, setPaginationState] = useState({ page: 1, sortMode });
 
   const normalizedQuotas = useMemo(
     () => quotas.map((quota, index) => ({
@@ -109,13 +106,8 @@ export default function QuotaTable({
 
   const totalPages = Math.max(1, Math.ceil(sortedQuotas.length / PAGE_SIZE));
 
-  useEffect(() => {
-    setPage(1);
-  }, [sortMode, quotas]);
-
-  useEffect(() => {
-    setPage((currentPage) => Math.min(currentPage, totalPages));
-  }, [totalPages]);
+  const page = paginationState.sortMode === sortMode ? Math.min(paginationState.page, totalPages) : 1;
+  const setPage = (update) => setPaginationState({ page: update(page), sortMode });
 
   if (!quotas || quotas.length === 0) {
     return null;
@@ -128,21 +120,21 @@ export default function QuotaTable({
   const pageStart = sortedQuotas.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
   const pageEnd = Math.min(page * PAGE_SIZE, sortedQuotas.length);
 
-  const cellPad = compact ? "py-1 px-1.5" : "py-2 px-3";
-  const nameText = compact ? "text-[11px]" : "text-sm";
-  const resetPrimary = compact ? "text-[11px]" : "text-sm";
-  const resetSecondary = compact ? "text-[10px] leading-tight" : "text-xs";
+  const cellPad = compact ? "py-1" : "py-2";
+  const nameText = compact ? "text-[13px]" : "text-sm";
+  const resetPrimary = "text-sm";
+  const resetSecondary = "text-xs";
   const sortLabel = "Sorted by account remaining";
   const hasHideAction = typeof onHideQuota === "function";
 
   return (
-    <div className="space-y-2">
+    <div className={compact ? "space-y-1" : "space-y-2"}>
       <div className="flex items-center justify-between gap-2">
-        <div className="text-[10px] text-text-muted">
-          {sortedQuotas.length} quota{sortedQuotas.length > 1 ? "s" : ""}
+        <div className="text-xs text-text-muted">
+          {sortedQuotas.length} model limits
         </div>
         {showSortLabel && (
-          <div className="rounded-md border border-black/10 bg-black/[0.02] px-2 py-1 text-[10px] text-text-muted dark:border-white/10 dark:bg-white/[0.03]">
+          <div className="rounded-md border border-black/10 bg-black/[0.02] px-2 py-1 text-xs text-text-muted dark:border-white/10 dark:bg-white/[0.03]">
             {sortLabel}
           </div>
         )}
@@ -153,7 +145,7 @@ export default function QuotaTable({
           const isUnlimited = quota.unlimited === true;
           const isCreditBalance = quota.isCreditBalance === true;
           const colors = isCreditBalance
-            ? { text: "text-blue-600 dark:text-blue-400", bg: "bg-blue-500", bgLight: "bg-blue-500/10", emoji: "💰" }
+            ? { text: "text-blue-600 dark:text-blue-400", bg: "bg-blue-500", bgLight: "bg-blue-500/10", }
             : getColorClasses(quota.colorPercentage ?? quota.remaining);
           // Qoder flags open-ended plans with `neverExpires` (its API reports a
           // year-9999 sentinel). Return "-"/"Never expires" rather than an empty
@@ -175,7 +167,7 @@ export default function QuotaTable({
           // refreshes at resetAt. Bonus/one-shot packs set recurring:false
           // and their resetAt is a hard expiry, so word it as "expires".
           const recurring = quota.recurring !== false;
-          const countdownLabel = recurring ? `in ${countdown}` : `expires in ${countdown}`;
+          const countdownLabel = recurring ? `Reset in ${countdown}` : `expires in ${countdown}`;
 
           // "See details" rows are a link to the provider's own usage page —
           // used where the API exposes no per-bucket date (Qoder add-on grants).
@@ -199,30 +191,29 @@ export default function QuotaTable({
           return (
             <div
               key={`${quota.name}-${quota.index}`}
-              className={`flex items-center gap-2 border-b border-black/5 dark:border-white/5 hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors ${cellPad}`}
+              className={`group grid grid-cols-[minmax(0,1fr)_minmax(100px,1fr)_auto] sm:grid-cols-[minmax(0,1.4fr)_minmax(100px,1fr)_112px_24px] items-center gap-x-3 gap-y-1 border-b border-black/5 dark:border-white/5 hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors ${cellPad}`}
             >
               {/* Name */}
-              <div className="flex w-36 min-w-0 items-center gap-1.5">
-                <span className="text-[10px] shrink-0">{colors.emoji}</span>
-                <span className={`${nameText} font-medium text-text-primary truncate`}>
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className={`${nameText} font-medium text-text-primary leading-snug`} title={quota.name}>
                   {quota.name}
                 </span>
               </div>
 
               {/* Progress + used/total */}
-              <div className={`min-w-0 flex-1 ${compact ? "space-y-1" : "space-y-1.5"}`}>
+              <div className={`min-w-0 flex-1 ${compact ? "space-y-0.5" : "space-y-1.5"}`}>
                 {!isUnlimited && !isCreditBalance && (
                 <div className={`${compact ? "h-1" : "h-1.5"} rounded-full overflow-hidden border ${colors.bgLight} ${
                   quota.remaining === 0 ? "border-black/10 dark:border-white/10" : "border-transparent"
                 }`}>
                   <div
-                    className={`h-full transition-all duration-300 ${colors.bg}`}
+                    className={`h-full ${colors.bg}`}
                     style={{ width: `${Math.min(quota.remaining, 100)}%` }}
                   />
                 </div>
                 )}
 
-                <div className={`flex items-center justify-between gap-1 min-w-0 ${compact ? "text-[10px]" : "text-xs"}`}>
+                <div className={`flex items-center justify-between gap-1 min-w-0 ${compact ? "text-xs" : "text-xs"}`}>
                   <span
                     className="text-text-muted truncate"
                     title={
@@ -241,18 +232,18 @@ export default function QuotaTable({
                           quota.unit ? ` ${quota.unit}` : ""
                         }`}
                   </span>
-                  <span className={`font-medium ${isUnlimited ? "text-green-600 dark:text-green-400" : isCreditBalance ? "text-blue-600 dark:text-blue-400" : colors.text} shrink-0`}>
-                    {isUnlimited ? "Unlimited" : isCreditBalance ? "" : `${quota.remaining}%`}
+                  <span className={`font-medium ${isUnlimited ? "text-text-primary" : isCreditBalance ? "text-blue-600 dark:text-blue-400" : colors.text} shrink-0`}>
+                    {isUnlimited ? "Unlimited" : isCreditBalance ? "" : `${quota.remaining}% left`}
                   </span>
                 </div>
               </div>
 
               {/* Reset time */}
-              <div className="min-w-0 shrink">
+              <div className="col-span-2 row-start-2 sm:col-span-1 sm:row-auto min-w-0 text-text-muted">
                 {countdown !== "-" || resetDisplay ? (
                   compact ? (
                     <div
-                      className={`${resetPrimary} text-text-primary font-medium truncate`}
+                      className={`${resetPrimary} text-text-muted text-xs leading-snug`}
                       title={resetSecondaryText || ""}
                     >
                       {countdown !== "-" ? countdownLabel : renderResetCell(resetPrimary)}
@@ -281,13 +272,11 @@ export default function QuotaTable({
                 <button
                   type="button"
                   onClick={() => onHideQuota(quota)}
-                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-black/5 hover:text-text-primary dark:hover:bg-white/5"
+                  className="inline-flex h-6 w-6 col-start-3 row-start-1 sm:col-start-auto sm:row-auto shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-black/5 hover:text-text-primary dark:hover:bg-white/5"
                   title="Hide this quota row"
                   aria-label={`Hide quota ${quota.name}`}
                 >
-                  <span className="material-symbols-outlined text-[15px]">
-                    visibility_off
-                  </span>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.2A11 11 0 0 1 12 5c7 0 10 7 10 7a17 17 0 0 1-3 4M6.1 6.1A18 18 0 0 0 2 12s3 7 10 7a11 11 0 0 0 5-1.2" /></svg>
                 </button>
               )}
             </div>
@@ -297,7 +286,7 @@ export default function QuotaTable({
 
       {totalPages > 1 && (
         <div className="rounded-md border border-black/10 bg-black/[0.02] px-2 py-1.5 dark:border-white/10 dark:bg-white/[0.03]">
-          <div className="flex items-center justify-between gap-2 text-[10px] text-text-muted">
+          <div className="flex items-center justify-between gap-2 text-xs text-text-muted">
             <span>
               Showing {pageStart}-{pageEnd} of {sortedQuotas.length}
             </span>
@@ -310,7 +299,7 @@ export default function QuotaTable({
               type="button"
               onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
               disabled={page === 1}
-              className="flex h-6 items-center rounded-md border border-black/10 px-2 text-[10px] text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
+              className="flex h-6 items-center rounded-md border border-black/10 px-2 text-xs text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
             >
               Prev
             </button>
@@ -318,7 +307,7 @@ export default function QuotaTable({
               type="button"
               onClick={() => setPage((currentPage) => Math.min(totalPages, currentPage + 1))}
               disabled={page === totalPages}
-              className="flex h-6 items-center rounded-md border border-black/10 px-2 text-[10px] text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
+              className="flex h-6 items-center rounded-md border border-black/10 px-2 text-xs text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
             >
               Next
             </button>

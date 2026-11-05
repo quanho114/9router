@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import QuotaTable from "./QuotaTable";
+import QuotaIcon from "./QuotaIcon";
 import Toggle from "@/shared/components/Toggle";
 import Tooltip from "@/shared/components/Tooltip";
 import {
@@ -30,7 +31,6 @@ import {
   setQuotaCache,
   QUOTA_CACHE_KEY,
   REFRESH_INTERVAL_MS,
-  CLAUDE_REFRESH_INTERVAL_MS,
   DEPLETED_QUOTA_THRESHOLD,
   AUTO_REFRESH_STORAGE_KEY,
   CONNECTIONS_PAGE_SIZE,
@@ -167,8 +167,6 @@ export default function ProviderLimits() {
   const [scheduleConnection, setScheduleConnection] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [hasHydratedAutoRefresh, setHasHydratedAutoRefresh] = useState(false);
-  const [refreshingAll, setRefreshingAll] = useState(false);
-  const [countdown, setCountdown] = useState(60);
   const [connectionsLoading, setConnectionsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState(null);
   const [togglingId, setTogglingId] = useState(null);
@@ -222,8 +220,10 @@ export default function ProviderLimits() {
   });
 
   const intervalRef = useRef(null);
-  const countdownRef = useRef(null);
-  const tickCountRef = useRef(0);
+  const refreshInFlightRef = useRef(false);
+  const quotaInFlightRef = useRef(new Set());
+  const connectionsRef = useRef(connections);
+  connectionsRef.current = connections;
 
   const fetchConnections = useCallback(
     async (targetPage = page) => {
@@ -240,7 +240,7 @@ export default function ProviderLimits() {
         }
 
         const response = await fetch(
-          `/api/providers/client?${params.toString()}`,
+          `/api/providers/client?${params.toString()}`, { cache: "no-store" },
         );
         if (!response.ok) throw new Error("Failed to fetch connections");
 
@@ -257,18 +257,16 @@ export default function ProviderLimits() {
         return connectionList;
       } catch (error) {
         console.error("Error fetching connections:", error);
-        setConnections([]);
-        setProviderOptions([]);
-        setPagination({ page: 1, pageSize, total: 0, totalPages: 1 });
-        setTotals({ eligibleConnections: 0, providerFilteredConnections: 0 });
-        return [];
+        return connectionsRef.current;
       }
     },
-    [accountFilter, expiringFirst, page, pageSize, providerFilter],
+    [accountFilter, page, pageSize, providerFilter],
   );
 
   // Fetch quota for a specific connection
   const fetchQuota = useCallback(async (connectionId, provider, { force = false } = {}) => {
+    if (quotaInFlightRef.current.has(connectionId)) return;
+    quotaInFlightRef.current.add(connectionId);
     setLoading((prev) => ({ ...prev, [connectionId]: true }));
     setErrors((prev) => ({ ...prev, [connectionId]: null }));
 
@@ -277,7 +275,7 @@ export default function ProviderLimits() {
         `[ProviderLimits] Fetching quota for ${provider} (${connectionId})`,
       );
       const url = `/api/usage/${connectionId}${force ? "?force=1" : ""}`;
-      const response = await fetch(url);
+      const response = await fetch(url, { cache: "no-store" });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -341,18 +339,10 @@ export default function ProviderLimits() {
         [connectionId]: error.message || "Failed to fetch quota",
       }));
     } finally {
+      quotaInFlightRef.current.delete(connectionId);
       setLoading((prev) => ({ ...prev, [connectionId]: false }));
     }
   }, []);
-
-  // Refresh quota for a specific provider
-  const refreshProvider = useCallback(
-    async (connectionId, provider) => {
-      await fetchQuota(connectionId, provider, { force: true });
-      setLastUpdated(new Date());
-    },
-    [fetchQuota],
-  );
 
   const handleResetCodexLimit = useCallback(
     async (connectionId, provider) => {
@@ -526,22 +516,13 @@ export default function ProviderLimits() {
     };
   }, []);
 
-  const refreshAll = useCallback(async (force = false) => {
-    if (refreshingAll) return;
-
-    setRefreshingAll(true);
-    setCountdown(60);
-
-    // Throttle Claude: poll its quota every Nth auto-tick (manual force bypasses)
-    const tick = (tickCountRef.current += 1);
-    const claudeEvery = Math.round(CLAUDE_REFRESH_INTERVAL_MS / REFRESH_INTERVAL_MS);
-    const shouldFetch = (conn) =>
-      force || conn.provider !== "claude" || tick % claudeEvery === 0;
+  const refreshAll = useCallback(async () => {
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
 
     try {
       const visibleConnections = await fetchConnections(page);
 
-      setLoading(buildLoadingState(visibleConnections));
       setErrors((prev) =>
         filterQuotaStateByConnections(prev, visibleConnections),
       );
@@ -551,7 +532,6 @@ export default function ProviderLimits() {
 
       await Promise.all(
         visibleConnections
-          .filter(shouldFetch)
           .map((conn) => fetchQuota(conn.id, conn.provider)),
       );
 
@@ -559,9 +539,9 @@ export default function ProviderLimits() {
     } catch (error) {
       console.error("Error refreshing all providers:", error);
     } finally {
-      setRefreshingAll(false);
+      refreshInFlightRef.current = false;
     }
-  }, [refreshingAll, fetchConnections, fetchQuota, page]);
+  }, [fetchConnections, fetchQuota, page]);
 
   useEffect(() => {
     const initializeData = async () => {
@@ -719,63 +699,16 @@ export default function ProviderLimits() {
     updateQuotaVisibility(next, previous);
   }, [quotaVisibility, updateQuotaVisibility]);
 
-  // Auto-refresh interval
+  // Silent updates; never overlap cycles or poll a hidden tab.
   useEffect(() => {
-    if (!hasHydratedAutoRefresh || !autoRefresh) {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
-      if (countdownRef.current) {
-        clearInterval(countdownRef.current);
-        countdownRef.current = null;
-      }
-      return;
-    }
-
-    // Main refresh interval
-    intervalRef.current = setInterval(() => {
-      refreshAll();
-    }, REFRESH_INTERVAL_MS);
-
-    // Countdown interval
-    countdownRef.current = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) return 60;
-        return prev - 1;
-      });
-    }, 1000);
-
+    if (!hasHydratedAutoRefresh || !autoRefresh) return;
+    const refresh = () => { if (!document.hidden) void refreshAll(); };
+    intervalRef.current = setInterval(refresh, REFRESH_INTERVAL_MS);
+    const onVisibilityChange = () => { if (!document.hidden) refresh(); };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (countdownRef.current) clearInterval(countdownRef.current);
-    };
-  }, [autoRefresh, refreshAll, hasHydratedAutoRefresh]);
-
-  // Pause auto-refresh when tab is hidden (Page Visibility API)
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-          intervalRef.current = null;
-        }
-        if (countdownRef.current) {
-          clearInterval(countdownRef.current);
-          countdownRef.current = null;
-        }
-      } else if (autoRefresh && hasHydratedAutoRefresh) {
-        // Resume auto-refresh when tab becomes visible
-        intervalRef.current = setInterval(() => refreshAll(), REFRESH_INTERVAL_MS);
-        countdownRef.current = setInterval(() => {
-          setCountdown((prev) => (prev <= 1 ? 60 : prev - 1));
-        }, 1000);
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      clearInterval(intervalRef.current);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [autoRefresh, refreshAll, hasHydratedAutoRefresh]);
 
@@ -890,9 +823,13 @@ export default function ProviderLimits() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="quota-tracker space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-text-muted">
+        <p>{pagination.total} accounts · Model capacity &amp; reset windows</p>
+        <span className="text-xs tabular-nums">{lastUpdated ? `Updated ${lastUpdated.toLocaleTimeString()}` : "Connecting…"}</span>
+      </div>
       {/* Header Controls */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-1.5">
           <div className="relative">
             <button
@@ -905,9 +842,7 @@ export default function ProviderLimits() {
             >
               <span className="flex min-w-0 items-center gap-1.5">
                 {providerFilter === "all" ? (
-                  <span className="material-symbols-outlined text-[14px] text-text-muted">
-                    apps
-                  </span>
+                  <QuotaIcon name="apps" className=" text-[14px] text-text-muted" />
                 ) : (
                   <ProviderIcon
                     src={`/providers/${providerFilter}.png`}
@@ -917,13 +852,11 @@ export default function ProviderLimits() {
                     fallbackText={providerFilter.slice(0, 2).toUpperCase()}
                   />
                 )}
-                <span className="truncate hidden lg:inline">
+                <span className="truncate">
                   {selectedProviderLabel}
                 </span>
               </span>
-              <span className="material-symbols-outlined text-[14px] text-text-muted">
-                expand_more
-              </span>
+              <QuotaIcon name="expand_more" className=" text-[14px] text-text-muted" />
             </button>
 
             {providerMenuOpen && (
@@ -946,9 +879,7 @@ export default function ProviderLimits() {
                     }}
                     className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${providerFilter === "all" ? "bg-primary/10 text-primary" : "text-text-primary hover:bg-black/5 dark:hover:bg-white/10"}`}
                   >
-                    <span className="material-symbols-outlined text-[22px]">
-                      apps
-                    </span>
+                    <QuotaIcon name="apps" className=" text-[22px]" />
                     <span className="font-medium">All providers</span>
                     {providerFilter === "all" && (
                       <span className="material-symbols-outlined ml-auto text-[20px]">
@@ -1034,76 +965,41 @@ export default function ProviderLimits() {
             className={`flex h-8 shrink-0 items-center gap-1 rounded-lg border px-2 text-xs transition-colors ${expiringFirst ? "border-amber-500/40 bg-amber-500/10 text-amber-500" : "border-black/10 text-text-primary hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5"}`}
             title="Sort accounts by earliest quota reset time"
           >
-            <span className="material-symbols-outlined text-[14px]">
-              hourglass_top
-            </span>
+            <QuotaIcon name="hourglass_empty" className="text-text-muted" />
             <span className="hidden sm:inline">Expiring first</span>
           </button>
 
-          {/* Bulk: disable depleted */}
-          <button
-            type="button"
-            onClick={handleDisableDepleted}
-            disabled={bulkToggling}
-            className="flex h-8 shrink-0 items-center gap-1 rounded-lg border border-red-500/30 px-2 text-xs text-red-500 transition-colors hover:bg-red-500/10 disabled:opacity-50"
-            title="Disable connections with depleted quota on the current page"
-          >
-            <span className="material-symbols-outlined text-[14px]">block</span>
-            <span className="hidden sm:inline">Turn off Empty</span>
-          </button>
-
-          {/* Bulk: enable available */}
-          <button
-            type="button"
-            onClick={handleEnableAvailable}
-            disabled={bulkToggling}
-            className="flex h-8 shrink-0 items-center gap-1 rounded-lg border border-emerald-500/30 px-2 text-xs text-emerald-500 transition-colors hover:bg-emerald-500/10 disabled:opacity-50"
-            title="Enable connections that still have quota on the current page"
-          >
-            <span className="material-symbols-outlined text-[14px]">
-              check_circle
-            </span>
-            <span className="hidden sm:inline">Turn on Available</span>
-          </button>
+          <details className="relative" onClick={(event) => { if (event.target.closest("button")) event.currentTarget.removeAttribute("open"); }}>
+            <summary className="flex h-8 cursor-pointer list-none items-center gap-1 rounded-lg border border-black/10 px-2 text-xs text-text-muted hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5 [&::-webkit-details-marker]:hidden">
+              Bulk actions <QuotaIcon name="expand_more" />
+            </summary>
+            <div className="absolute left-0 top-9 z-20 w-48 rounded-lg border border-black/10 bg-surface p-1 shadow-lg dark:border-white/10">
+              <button type="button" onClick={handleDisableDepleted} disabled={bulkToggling} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-text-primary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50">
+                <QuotaIcon name="block" /> Disable depleted
+              </button>
+              <button type="button" onClick={handleEnableAvailable} disabled={bulkToggling} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-text-primary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50">
+                <QuotaIcon name="check_circle" /> Enable available
+              </button>
+            </div>
+          </details>
 
           {/* Auto-refresh toggle */}
           <button
+            type="button"
+            aria-pressed={autoRefresh}
+            aria-label={autoRefresh ? "Pause live updates" : "Resume live updates"}
             onClick={() => setAutoRefresh((prev) => !prev)}
             className="flex h-8 shrink-0 items-center gap-1 rounded-lg border border-black/10 px-2 text-xs transition-colors hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5"
             title={autoRefresh ? "Disable auto-refresh" : "Enable auto-refresh"}
           >
-            <span
-              className={`material-symbols-outlined text-[14px] ${
-                autoRefresh ? "text-primary" : "text-text-muted"
-              }`}
-            >
-              {autoRefresh ? "toggle_on" : "toggle_off"}
+            <span aria-hidden="true" className={`size-1.5 rounded-full ${autoRefresh ? "bg-emerald-600" : "bg-neutral-400"}`} />
+            <span className="text-text-primary">
+              {autoRefresh ? "Live · 3s" : "Updates paused"}
             </span>
-            <span className="hidden text-text-primary sm:inline">
-              Auto-refresh
-            </span>
-            {autoRefresh && (
-              <span className="text-[10px] text-text-muted tabular-nums">
-                ({countdown}s)
-              </span>
-            )}
           </button>
 
 
-          {/* Refresh all button */}
-          <button
-            type="button"
-            onClick={() => refreshAll(true)}
-            disabled={refreshingAll}
-            className="flex h-8 shrink-0 items-center gap-1 rounded-lg border border-black/10 px-2 text-xs text-text-primary transition-colors hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5 disabled:opacity-50"
-            title="Refresh all"
-          >
-            <span
-              className={`material-symbols-outlined text-[14px] ${refreshingAll ? "animate-spin" : ""}`}
-            >
-              refresh
-            </span>
-          </button>
+
         </div>
       </div>
 
@@ -1115,7 +1011,7 @@ export default function ProviderLimits() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 xl:grid-cols-2 items-start gap-3">
         {sortedConnections.map((conn) => {
           const quota = quotaData[conn.id];
           const isLoading = loading[conn.id];
@@ -1137,16 +1033,16 @@ export default function ProviderLimits() {
             <Card
               key={conn.id}
               padding="none"
-              className={`min-w-0 ${isInactive ? "opacity-60" : ""}`}
+              className={`min-w-0 !rounded-xl !shadow-none border border-black/[0.08] dark:border-white/10 ${isInactive ? "opacity-60" : ""}`}
             >
-              <div className="px-3 py-2 border-b border-black/10 dark:border-white/10">
+              <div className="px-3 py-2 border-b border-black/5 dark:border-white/10">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-8 h-8 shrink-0 rounded-md flex items-center justify-center overflow-hidden">
+                    <div className="w-7 h-7 shrink-0 rounded-md flex items-center justify-center overflow-hidden">
                       <ProviderIcon
                         src={`/providers/${conn.provider}.png`}
                         alt={conn.provider}
-                        size={32}
+                        size={28}
                         className="object-contain"
                         fallbackText={
                           conn.provider?.slice(0, 2).toUpperCase() || "PR"
@@ -1225,7 +1121,7 @@ export default function ProviderLimits() {
                           <button
                             type="button"
                             onClick={() => setResetConfirmState({ connection: conn, resetCreditCount })}
-                            disabled={resetCreditCount <= 0 || isLoading || rowBusy}
+                            disabled={resetCreditCount <= 0 || rowBusy}
                             aria-label={
                               resetCreditCount > 0
                                 ? `Use one ${resetLabel}. ${resetCreditCount} available.`
@@ -1247,11 +1143,11 @@ export default function ProviderLimits() {
                           <button
                             type="button"
                             onClick={() => (isCodex ? handleViewCodexResetCredits(conn) : handleViewClaudeResets(conn, claudeReset))}
-                            disabled={isLoading || rowBusy}
+                            disabled={rowBusy}
                             aria-label={isCodex ? "View Codex reset credit expiry" : "View Claude Code reset expiry"}
                             className="flex h-8 w-8 items-center justify-center rounded-lg border border-black/10 text-text-muted transition-colors hover:bg-black/5 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/5"
                           >
-                            <span className="material-symbols-outlined text-[17px]">schedule</span>
+                            <QuotaIcon name="schedule" className=" text-[17px]" />
                           </button>
                         </Tooltip>
                       </>
@@ -1281,28 +1177,19 @@ export default function ProviderLimits() {
                             type="button"
                             onClick={() => setScheduleConnection(conn)}
                             aria-label="Configure auto-ping"
-                            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-black/5 dark:hover:bg-white/5 ${isActive ? "text-primary" : "text-text-muted"}`}
+                            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${isActive ? "bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-400/20 dark:text-amber-300 dark:hover:bg-amber-400/30" : "text-text-muted hover:bg-black/5 dark:hover:bg-white/5"}`}
                           >
-                            <span className="material-symbols-outlined text-[18px]">bolt</span>
+                            <QuotaIcon name="bolt" className=" text-[18px]" />
                           </button>
                         </Tooltip>
                       );
                     })()}
-                    <Tooltip text="Refresh quota">
-                      <button
-                        type="button"
-                        onClick={() => refreshProvider(conn.id, conn.provider)}
-                        disabled={isLoading || rowBusy}
-                        aria-label="Refresh quota"
-                        className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors disabled:opacity-50"
-                      >
-                        <span
-                          className={`material-symbols-outlined text-[18px] text-text-muted ${isLoading ? "animate-spin" : ""}`}
-                        >
-                          refresh
-                        </span>
-                      </button>
-                    </Tooltip>
+
+                    <details className="relative" onClick={(event) => { if (event.target.closest("button")) event.currentTarget.removeAttribute("open"); }} onKeyDown={(event) => { if (event.key === "Escape") event.currentTarget.removeAttribute("open"); }}>
+                      <summary aria-label="Account actions" className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg text-text-muted hover:bg-black/5 dark:hover:bg-white/5 [&::-webkit-details-marker]:hidden">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+                      </summary>
+                      <div className="absolute right-0 top-9 z-20 w-44 rounded-lg border border-black/10 bg-surface p-1 shadow-lg dark:border-white/10">
                     <Tooltip text="Edit connection">
                       <button
                         type="button"
@@ -1312,11 +1199,9 @@ export default function ProviderLimits() {
                         }}
                         disabled={rowBusy}
                         aria-label="Edit connection"
-                        className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-primary transition-colors disabled:opacity-50"
+                        className="flex h-8 w-full items-center justify-start gap-2 px-3 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-text-muted hover:text-primary transition-colors disabled:opacity-50"
                       >
-                        <span className="material-symbols-outlined text-[18px]">
-                          edit
-                        </span>
+                        <QuotaIcon name="edit" className=" text-[18px]" /><span className="text-xs">Edit connection</span>
                       </button>
                     </Tooltip>
                     <Tooltip text="Delete connection">
@@ -1325,15 +1210,13 @@ export default function ProviderLimits() {
                         onClick={() => handleDeleteConnection(conn.id)}
                         disabled={rowBusy}
                         aria-label="Delete connection"
-                        className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-red-500/10 text-red-500 transition-colors disabled:opacity-50"
+                        className="flex h-8 w-full items-center justify-start gap-2 px-3 rounded-lg hover:bg-red-500/10 text-text-muted hover:text-red-500 transition-colors disabled:opacity-50"
                       >
-                        <span
-                          className={`material-symbols-outlined text-[18px] ${deletingId === conn.id ? "animate-pulse" : ""}`}
-                        >
-                          delete
-                        </span>
+                        <QuotaIcon name="delete" className={` text-[18px] ${deletingId === conn.id ? "animate-pulse" : ""}`} /><span className="text-xs">Delete connection</span>
                       </button>
                     </Tooltip>
+                      </div>
+                    </details>
                     <div
                       className="inline-flex items-center pl-0.5"
                       title={
@@ -1355,21 +1238,21 @@ export default function ProviderLimits() {
                 </div>
               </div>
 
-              <div className="px-2 py-1.5">
-                {isLoading ? (
+              <div className="px-3 py-1">
+                {isLoading && !quota ? (
                   <div className="text-center py-5 text-text-muted">
                     <span className="material-symbols-outlined text-[28px] animate-spin">
                       progress_activity
                     </span>
                   </div>
-                ) : error ? (
+                ) : error && !quota ? (
                   <div className="text-center py-5">
                     <span className="material-symbols-outlined text-[28px] text-red-500">
                       error
                     </span>
                     <p className="mt-1.5 text-xs text-text-muted">{error}</p>
                   </div>
-                ) : quota?.message ? (
+                ) : quota?.message && !visibleQuotas.length ? (
                   <div className="text-center py-5">
                     <p className="text-xs text-text-muted">{quota.message}</p>
                   </div>
@@ -1384,8 +1267,9 @@ export default function ProviderLimits() {
                     onHideQuota={(quotaRow) => handleHideQuota(conn.provider, quotaRow)}
                   />
                 )}
-                {quota?.message && !error && !isLoading && (
-                  <p className="mt-2 px-1 text-[10px] leading-relaxed text-text-muted">
+                {error && quota && <p role="status" className="mt-2 text-xs text-amber-700 dark:text-amber-400">Update failed. Showing last available data.</p>}
+                {quota?.message && visibleQuotas.length > 0 && !error && (
+                  <p className="mt-2 px-1 text-xs leading-relaxed text-text-muted">
                     {quota.message}
                   </p>
                 )}
@@ -1483,7 +1367,7 @@ export default function ProviderLimits() {
                 type="button"
                 onClick={() => setPage(1)}
                 disabled={
-                  pagination.page <= 1 || connectionsLoading || refreshingAll
+                  pagination.page <= 1 || connectionsLoading
                 }
                 className="flex h-8 items-center rounded-lg border border-black/10 px-3 text-xs text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
               >
@@ -1495,7 +1379,7 @@ export default function ProviderLimits() {
                   setPage((currentPage) => Math.max(1, currentPage - 1))
                 }
                 disabled={
-                  pagination.page <= 1 || connectionsLoading || refreshingAll
+                  pagination.page <= 1 || connectionsLoading
                 }
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-black/10 text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
                 aria-label="Previous accounts page"
@@ -1513,8 +1397,7 @@ export default function ProviderLimits() {
                 }
                 disabled={
                   pagination.page >= pagination.totalPages ||
-                  connectionsLoading ||
-                  refreshingAll
+                  connectionsLoading
                 }
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-black/10 text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
                 aria-label="Next accounts page"
@@ -1528,8 +1411,7 @@ export default function ProviderLimits() {
                 onClick={() => setPage(pagination.totalPages)}
                 disabled={
                   pagination.page >= pagination.totalPages ||
-                  connectionsLoading ||
-                  refreshingAll
+                  connectionsLoading
                 }
                 className="flex h-8 items-center rounded-lg border border-black/10 px-3 text-xs text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
               >
