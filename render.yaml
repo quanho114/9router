@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: 9router
+    runtime: docker
+    plan: free
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "20128"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: INITIAL_PASSWORD
+        value: "123456"
+      - key: SUPABASE_URL
+        value: https://kcvyvhfkghkydahboric.supabase.co
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: SUPABASE_JWKS_URL
+        value: https://kcvyvhfkghkydahboric.supabase.co/auth/v1/.well-known/jwks.json

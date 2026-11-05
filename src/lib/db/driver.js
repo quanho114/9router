@@ -101,6 +101,11 @@ async function initAdapter() {
 
   const { runMigrationOnce } = await import("./migrate.js");
   await runMigrationOnce(adapter);
+
+  const { initSupabaseSync, withSupabaseSync } = await import("./supabaseSync.js");
+  await initSupabaseSync(adapter);
+  adapter = withSupabaseSync(adapter);
+
   return adapter;
 }
 

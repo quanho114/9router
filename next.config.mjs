@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import os from "node:os";
 
 const projectRoot = dirname(fileURLToPath(import.meta.url));
 // CLI bundling needs workspace root so tracing includes hoisted node_modules (slim ~50MB).
@@ -9,10 +10,29 @@ const tracingRoot = process.env.NEXT_TRACING_ROOT_MODE === "workspace"
   : projectRoot;
 const proxyClientMaxBodySize = process.env.NINEROUTER_PROXY_CLIENT_MAX_BODY_SIZE || "128mb";
 
+function getLocalDevOrigins() {
+  const origins = new Set(["localhost", "127.0.0.1", "192.168.84.107"]);
+  try {
+    const nets = os.networkInterfaces();
+    for (const entries of Object.values(nets)) {
+      for (const net of entries || []) {
+        if (net && net.address) origins.add(net.address);
+      }
+    }
+  } catch {}
+  if (process.env.ALLOWED_DEV_ORIGINS) {
+    for (const o of process.env.ALLOWED_DEV_ORIGINS.split(",")) {
+      if (o.trim()) origins.add(o.trim());
+    }
+  }
+  return Array.from(origins);
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
   output: "standalone",
+  allowedDevOrigins: getLocalDevOrigins(),
   // `open` must stay external. It derives its own directory from `import.meta.url`, and
   // webpack replaces that with the absolute path of the BUILD machine as a string literal.
   // A release built on macOS therefore ships `file:///Users/.../open/index.js`, which
