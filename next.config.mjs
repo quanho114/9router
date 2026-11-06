@@ -74,11 +74,12 @@ const nextConfig = {
         path: false,
       };
     }
-    // Exclude non-source dirs from watcher to reduce inotify load
+    // Ignore generated build directories too, including NEXT_DIST_DIR variants.
+    // Watching compiler output causes a build -> file change -> rebuild loop.
     config.watchOptions = {
       ...config.watchOptions,
       aggregateTimeout: 300,
-      ignored: /[\\/](node_modules|\.git|logs|\.next|\.next-cli-build|gitbook|cli|open-sse\.old|tests|docs)[\\/]/,
+      ignored: /[\\/](node_modules|\.git|logs|\.next(?:-[^\\/]+)?|\.scratch|output|data|gitbook|cli|open-sse\.old|tests|docs)(?:[\\/]|$)/,
     };
     return config;
   },

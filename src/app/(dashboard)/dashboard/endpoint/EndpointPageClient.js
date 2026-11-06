@@ -19,11 +19,14 @@ import StatusAlert from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
 import SecurityWarning from "./components/SecurityWarning";
 import KeyAccessControls from "./components/KeyAccessControls";
+import TokenQuotaRing from "./components/TokenQuotaRing";
+import UserKeyProvisionModal from "./components/UserKeyProvisionModal";
+import { checkKeyStatus } from "@/shared/utils/keyAccess";
 export default function APIPageClient({ machineId }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [newKeyName, setNewKeyName] = useState("");
+  const [editingKey, setEditingKey] = useState(null);
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
 
@@ -102,6 +105,25 @@ export default function APIPageClient({ machineId }) {
   useEffect(() => {
     fetchData();
     loadSettings();
+  }, []);
+
+  // Silently refresh API keys every 5s when tab is visible so circular token gauges stay live
+  useEffect(() => {
+    const refreshKeysSilently = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      try {
+        const res = await fetch("/api/keys", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (Array.isArray(data.keys)) {
+          setKeys(data.keys);
+        }
+      } catch {
+        /* ignore background poll errors */
+      }
+    };
+    const timer = setInterval(refreshKeysSilently, 5000);
+    return () => clearInterval(timer);
   }, []);
 
   // Status poll: only while degraded (not yet reachable). Stop once healthy to avoid spam.
@@ -615,26 +637,70 @@ export default function APIPageClient({ machineId }) {
     }
   };
 
-  const handleCreateKey = async () => {
-    if (!newKeyName.trim()) return;
-
+  const handleCreateKey = async (payload) => {
     try {
       const res = await fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newKeyName }),
+        body: JSON.stringify(payload),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (res.ok) {
         setCreatedKey(data.key);
         await fetchData();
-        setNewKeyName("");
         setShowAddModal(false);
+        return { ok: true };
       }
+      return { error: data.error || "Không thể tạo API Key" };
     } catch (error) {
       console.log("Error creating key:", error);
+      return { error: error.message || "Không thể tạo API Key" };
     }
+  };
+
+  const handleSaveEditedKey = async (id, payload) => {
+    try {
+      const res = await fetch(`/api/keys/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data.key) {
+        setKeys((prev) => prev.map((k) => (k.id === id ? data.key : k)));
+        setEditingKey(null);
+        return { ok: true };
+      }
+      return { error: data.error || "Không thể cập nhật API Key" };
+    } catch (error) {
+      console.log("Error updating key:", error);
+      return { error: error.message || "Không thể cập nhật API Key" };
+    }
+  };
+
+  const handleResetKeyUsage = (key) => {
+    setConfirmState({
+      title: "Reset Token Quota",
+      message: `Reset bộ đếm token đã dùng của key "${key.name}" về 0 (Input & Output)?`,
+      onConfirm: async () => {
+        setConfirmState(null);
+        try {
+          const res = await fetch(`/api/keys/${key.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ resetUsage: true }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.key) {
+            setKeys((prev) => prev.map((k) => (k.id === key.id ? data.key : k)));
+          }
+        } catch (error) {
+          console.log("Error resetting key usage:", error);
+        }
+      },
+    });
   };
 
   const handleDeleteKey = async (id) => {
@@ -977,13 +1043,18 @@ export default function APIPageClient({ machineId }) {
 
       {/* API Keys */}
       <Card id="require-api-key">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary">vpn_key</span>
-            API Keys
-          </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <div>
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary">vpn_key</span>
+              API Keys & User Quota
+            </h2>
+            <p className="text-xs text-text-muted mt-0.5">
+              Cấp key cho user với danh sách model được tick chọn, giới hạn gói Input/Output token và thời hạn sử dụng
+            </p>
+          </div>
           <Button icon="add" onClick={() => setShowAddModal(true)}>
-            Create Key
+            Generate User Key
           </Button>
         </div>
 
@@ -1014,127 +1085,222 @@ export default function APIPageClient({ machineId }) {
             <p className="text-text-main font-medium mb-1">No API keys yet</p>
             <p className="text-sm text-text-muted mb-4">Create your first API key to get started</p>
             <Button icon="add" onClick={() => setShowAddModal(true)}>
-              Create Key
+              Generate User Key
             </Button>
           </div>
         ) : (
-          <div className="flex flex-col">
-            {keys.map((key) => (
-              <div
-                key={key.id}
-                className={`group flex items-start justify-between gap-3 py-3 border-b border-black/[0.03] dark:border-white/[0.03] last:border-b-0 ${key.isActive === false ? "opacity-60" : ""}`}
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">{key.name}</p>
-                  <div className="flex items-center gap-2 mt-1 min-w-0 flex-wrap">
-                    <code className="text-xs text-text-muted font-mono break-all min-w-0">
-                      {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
-                    </code>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        onClick={() => toggleKeyVisibility(key.id)}
-                        className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
-                        title={visibleKeys.has(key.id) ? "Hide key" : "Show key"}
-                      >
-                        <span className="material-symbols-outlined text-[14px]">
-                          {visibleKeys.has(key.id) ? "visibility_off" : "visibility"}
+          <div className="flex flex-col divide-y divide-black/[0.04] dark:divide-white/[0.05]">
+            {keys.map((key) => {
+              const statusInfo = checkKeyStatus(key);
+              const isRevoked = key.isActive === false;
+              const isExpired = statusInfo.reason === "expired";
+              const isInputFull = statusInfo.reason === "input_quota_exceeded";
+              const isOutputFull = statusInfo.reason === "output_quota_exceeded";
+              const hasUsage =
+                (Number(key.usedInputTokens) || 0) > 0 ||
+                (Number(key.usedOutputTokens) || 0) > 0;
+
+              return (
+                <div
+                  key={key.id}
+                  className={`group flex flex-col lg:flex-row lg:items-center justify-between gap-4 py-4 ${
+                    !statusInfo.ok ? "opacity-75" : ""
+                  }`}
+                >
+                  {/* Left: Key identity, status badges, expiry, and model allowlist */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-text-main">{key.name}</p>
+                      {statusInfo.ok ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-500">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                          Active
                         </span>
-                      </button>
-                      <button
-                        onClick={() => copy(key.key, key.id)}
-                        className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
-                      >
-                        <span className="material-symbols-outlined text-[14px]">
-                          {copied === key.id ? "check" : "content_copy"}
+                      ) : isRevoked ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-medium text-red-500">
+                          <span className="material-symbols-outlined text-[12px]">block</span>
+                          Đã thu hồi (Revoked)
                         </span>
-                      </button>
+                      ) : isExpired ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-medium text-red-500">
+                          <span className="material-symbols-outlined text-[12px]">event_busy</span>
+                          Đã hết hạn ngày
+                        </span>
+                      ) : (isInputFull || isOutputFull) ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-medium text-red-500">
+                          <span className="material-symbols-outlined text-[12px]">data_alert</span>
+                          Hết hạn mức {isInputFull ? "Input" : "Output"} Token
+                        </span>
+                      ) : null}
+
+                      {/* Expiration badge */}
+                      {key.expiresAt ? (
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[11px] ${
+                            isExpired
+                              ? "bg-red-500/10 text-red-500 border border-red-500/30"
+                              : "bg-amber-500/10 text-amber-500 border border-amber-500/20"
+                          }`}
+                          title={`Expires at: ${new Date(key.expiresAt).toLocaleString()}`}
+                        >
+                          <span className="material-symbols-outlined text-[12px]">schedule</span>
+                          HSD: {new Date(key.expiresAt).toLocaleDateString()}{" "}
+                          {new Date(key.expiresAt).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-surface-2 px-2 py-0.5 font-mono text-[11px] text-text-muted">
+                          <span className="material-symbols-outlined text-[12px]">all_inclusive</span>
+                          No Date
+                        </span>
+                      )}
                     </div>
-                  </div>
-                  <p className="text-xs text-text-muted mt-1">
-                    Created {new Date(key.createdAt).toLocaleDateString()}
-                  </p>
-                  {key.isActive === false && (
-                    <p className="text-xs text-orange-500 mt-1">Paused</p>
-                  )}
-                  <KeyAccessControls
-                    apiKey={key}
-                    onChange={(access) => handleUpdateKeyAccess(key.id, access)}
-                    onRequestRestrict={() => setConfirmState({
-                      title: "Restrict API Key",
-                      message: `Restrict API key "${key.name}"?\n\nIt will only be able to call the combos and models you add. Until you add one, it can call nothing.`,
-                      onConfirm: async () => {
-                        setConfirmState(null);
-                        handleUpdateKeyAccess(key.id, { restricted: true, allow: key.access?.allow || [] });
-                      }
-                    })}
-                  />
-                </div>
-                <div className="flex items-center gap-2 shrink-0 pt-0.5">
-                  <Toggle
-                    size="sm"
-                    checked={key.isActive ?? true}
-                    onChange={(checked) => {
-                      if (key.isActive && !checked) {
+
+                    {/* Masked Key + Copy/Show */}
+                    <div className="flex items-center gap-2 mt-1.5 min-w-0 flex-wrap">
+                      <code className="text-xs text-text-muted font-mono break-all min-w-0">
+                        {visibleKeys.has(key.id) ? key.key : maskKey(key.key)}
+                      </code>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          onClick={() => toggleKeyVisibility(key.id)}
+                          className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                          title={visibleKeys.has(key.id) ? "Hide key" : "Show key"}
+                        >
+                          <span className="material-symbols-outlined text-[14px]">
+                            {visibleKeys.has(key.id) ? "visibility_off" : "visibility"}
+                          </span>
+                        </button>
+                        <button
+                          onClick={() => copy(key.key, key.id)}
+                          className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded text-text-muted hover:text-primary transition-all"
+                          title="Copy API key"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">
+                            {copied === key.id ? "check" : "content_copy"}
+                          </span>
+                        </button>
+                      </div>
+                      <span className="text-[11px] text-text-muted">
+                        • Tạo ngày {new Date(key.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+
+                    <KeyAccessControls
+                      apiKey={key}
+                      onChange={(access) => handleUpdateKeyAccess(key.id, access)}
+                      onRequestRestrict={() =>
                         setConfirmState({
-                          title: "Pause API Key",
-                          message: `Pause API key "${key.name}"?\n\nThis key will stop working immediately but can be resumed later.`,
+                          title: "Restrict API Key",
+                          message: `Restrict API key "${key.name}"?\n\nIt will only be able to call the combos and models you add. Until you add one, it can call nothing.`,
                           onConfirm: async () => {
                             setConfirmState(null);
-                            handleToggleKey(key.id, checked);
-                          }
-                        });
-                      } else {
-                        handleToggleKey(key.id, checked);
+                            handleUpdateKeyAccess(key.id, {
+                              restricted: true,
+                              allow: key.access?.allow || [],
+                            });
+                          },
+                        })
                       }
-                    }}
-                    title={key.isActive ? "Pause key" : "Resume key"}
-                  />
-                  <button
-                    onClick={() => handleDeleteKey(key.id)}
-                    className="p-2 hover:bg-red-500/10 rounded text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
-                  >
-                    <span className="material-symbols-outlined text-[18px]">delete</span>
-                  </button>
+                    />
+                  </div>
+
+                  {/* Center: Circular Token Quota Gauges (Input & Output) */}
+                  <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                    <TokenQuotaRing
+                      label="Input Token"
+                      used={key.usedInputTokens || 0}
+                      max={key.maxInputTokens || 0}
+                      accent="cyan"
+                    />
+                    <TokenQuotaRing
+                      label="Output Token"
+                      used={key.usedOutputTokens || 0}
+                      max={key.maxOutputTokens || 0}
+                      accent="violet"
+                    />
+                  </div>
+
+                  {/* Right: Actions (Edit Quota & Models, Reset Counter, Revoke/Restore, Delete) */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => setEditingKey(key)}
+                      className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-text-main hover:border-primary hover:text-primary transition-colors"
+                      title="Cấu hình Model, Quota Token & Ngày hết hạn"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">tune</span>
+                      <span>Cấu hình</span>
+                    </button>
+
+                    {hasUsage && (
+                      <button
+                        onClick={() => handleResetKeyUsage(key)}
+                        className="p-1.5 rounded-lg border border-border text-text-muted hover:text-amber-500 hover:border-amber-500/40 transition-colors"
+                        title="Reset bộ đếm token đã dùng về 0"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">restart_alt</span>
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => {
+                        if (key.isActive !== false) {
+                          setConfirmState({
+                            title: "Thu hồi (Revoke) API Key",
+                            message: `Thu hồi quyền truy cập của key "${key.name}"?\n\nUser sẽ không thể gọi API bằng key này nữa cho đến khi bạn mở lại.`,
+                            onConfirm: async () => {
+                              setConfirmState(null);
+                              handleToggleKey(key.id, false);
+                            },
+                          });
+                        } else {
+                          handleToggleKey(key.id, true);
+                        }
+                      }}
+                      className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                        key.isActive !== false
+                          ? "border-orange-500/30 text-orange-500 hover:bg-orange-500/10"
+                          : "border-emerald-500/30 text-emerald-500 hover:bg-emerald-500/10"
+                      }`}
+                      title={key.isActive !== false ? "Thu hồi key" : "Kích hoạt lại key"}
+                    >
+                      <span className="material-symbols-outlined text-[15px]">
+                        {key.isActive !== false ? "block" : "check_circle"}
+                      </span>
+                      <span>{key.isActive !== false ? "Thu hồi" : "Mở lại"}</span>
+                    </button>
+
+                    <button
+                      onClick={() => handleDeleteKey(key.id)}
+                      className="p-1.5 hover:bg-red-500/10 rounded-lg text-red-500 transition-all"
+                      title="Xóa vĩnh viễn API Key"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">delete</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>
 
-      {/* Add Key Modal */}
-      <Modal
+      {/* Provision New User Key Modal */}
+      <UserKeyProvisionModal
         isOpen={showAddModal}
-        title="Create API Key"
-        onClose={() => {
-          setShowAddModal(false);
-          setNewKeyName("");
-        }}
-      >
-        <div className="flex flex-col gap-4">
-          <Input
-            label="Key Name"
-            value={newKeyName}
-            onChange={(e) => setNewKeyName(e.target.value)}
-            placeholder="Production Key"
-          />
-          <div className="flex gap-2">
-            <Button onClick={handleCreateKey} fullWidth disabled={!newKeyName.trim()}>
-              Create
-            </Button>
-            <Button
-              onClick={() => {
-                setShowAddModal(false);
-                setNewKeyName("");
-              }}
-              variant="ghost"
-              fullWidth
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      </Modal>
+        onClose={() => setShowAddModal(false)}
+        onSubmit={handleCreateKey}
+      />
+
+      {/* Edit Existing User Key Modal */}
+      <UserKeyProvisionModal
+        isOpen={!!editingKey}
+        initialKey={editingKey}
+        onClose={() => setEditingKey(null)}
+        onSubmit={(payload) => handleSaveEditedKey(editingKey.id, payload)}
+      />
 
       {/* Created Key Modal */}
       <Modal

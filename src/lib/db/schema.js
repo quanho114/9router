@@ -87,6 +87,12 @@ export const TABLES = {
       // syncSchemaFromTables() on boot; existing rows read as unrestricted (0).
       accessRestricted: "INTEGER DEFAULT 0",
       accessAllow: "TEXT",
+      // Per-key token quota & expiration (0 / NULL = unlimited / no date).
+      maxInputTokens: "INTEGER DEFAULT 0",
+      maxOutputTokens: "INTEGER DEFAULT 0",
+      usedInputTokens: "INTEGER DEFAULT 0",
+      usedOutputTokens: "INTEGER DEFAULT 0",
+      expiresAt: "TEXT",
     },
     indexes: ["CREATE INDEX IF NOT EXISTS idx_ak_key ON apiKeys(key)"],
   },

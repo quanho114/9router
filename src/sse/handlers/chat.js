@@ -82,6 +82,11 @@ export async function handleChat(request, clientRawRequest = null) {
     }
     const valid = await isValidApiKey(apiKey);
     if (!valid) {
+      const deniedCtx = await getKeyAccessContext(request);
+      if (deniedCtx?.deniedStatus) {
+        log.warn("AUTH", `API key rejected (${deniedCtx.deniedStatus.reason})`);
+        return errorResponse(deniedCtx.deniedStatus.status, deniedCtx.deniedStatus.message);
+      }
       log.warn("AUTH", "Invalid API key (requireApiKey=true)");
       return errorResponse(HTTP_STATUS.UNAUTHORIZED, "Invalid API key");
     }

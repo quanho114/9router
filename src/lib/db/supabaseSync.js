@@ -192,7 +192,7 @@ export function applySnapshotToAdapter(adapter, snapshot) {
         adapter.run(`DELETE FROM apiKeys`);
         for (const r of t.apiKeys) {
           adapter.run(
-            `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow, maxInputTokens, maxOutputTokens, usedInputTokens, usedOutputTokens, expiresAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               r.id,
               r.key,
@@ -202,6 +202,11 @@ export function applySnapshotToAdapter(adapter, snapshot) {
               r.createdAt || new Date().toISOString(),
               r.accessRestricted ?? 0,
               r.accessAllow ?? null,
+              r.maxInputTokens ?? 0,
+              r.maxOutputTokens ?? 0,
+              r.usedInputTokens ?? 0,
+              r.usedOutputTokens ?? 0,
+              r.expiresAt ?? null,
             ]
           );
         }

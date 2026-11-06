@@ -234,3 +234,87 @@ describe("helpers: storage + validation", () => {
     expect(v({ restricted: true, allow: ["x".repeat(300)] }).ok).toBe(false);
   });
 });
+
+describe("quota, expiration & revocation enforcement", () => {
+  it("enforces revoked (403), expired (403), input token quota exceeded (429), and output token quota exceeded (429)", async () => {
+    fx.keys["sk-revoked"] = {
+      id: "rev",
+      name: "revoked-key",
+      isActive: false,
+      access: { restricted: false, allow: [] },
+    };
+    fx.keys["sk-expired"] = {
+      id: "exp",
+      name: "expired-key",
+      isActive: true,
+      expiresAt: "2020-01-01T00:00:00.000Z",
+      access: { restricted: false, allow: [] },
+    };
+    fx.keys["sk-future"] = {
+      id: "fut",
+      name: "future-key",
+      isActive: true,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      maxInputTokens: 1000,
+      usedInputTokens: 500,
+      maxOutputTokens: 500,
+      usedOutputTokens: 200,
+      access: { restricted: true, allow: ["openai/model-b"] },
+    };
+    fx.keys["sk-in-full"] = {
+      id: "in-full",
+      name: "in-full-key",
+      isActive: true,
+      maxInputTokens: 1000,
+      usedInputTokens: 1000,
+      maxOutputTokens: 5000,
+      usedOutputTokens: 100,
+      access: { restricted: false, allow: [] },
+    };
+    fx.keys["sk-out-full"] = {
+      id: "out-full",
+      name: "out-full-key",
+      isActive: true,
+      maxInputTokens: 5000,
+      usedInputTokens: 100,
+      maxOutputTokens: 500,
+      usedOutputTokens: 550,
+      access: { restricted: false, allow: [] },
+    };
+
+    expect(await status("sk-revoked", "openai/model-a")).toBe(403);
+    expect(await status("sk-expired", "openai/model-a")).toBe(403);
+    expect(await status("sk-in-full", "openai/model-a")).toBe(429);
+    expect(await status("sk-out-full", "openai/model-a")).toBe(429);
+
+    // Future key within quota respects model allowlist
+    expect(await status("sk-future", "openai/model-b")).toBe(200);
+    expect(await status("sk-future", "openai/model-a")).toBe(403);
+
+    // Filter models returns empty list for exhausted/expired/revoked keys
+    const sampleModels = [{ id: "openai/model-b", owned_by: "openai" }];
+    expect(await engine.filterModelsListForKey(await ctxFor("sk-revoked"), sampleModels)).toEqual([]);
+    expect(await engine.filterModelsListForKey(await ctxFor("sk-expired"), sampleModels)).toEqual([]);
+    expect(await engine.filterModelsListForKey(await ctxFor("sk-in-full"), sampleModels)).toEqual([]);
+    expect(await engine.filterModelsListForKey(await ctxFor("sk-out-full"), sampleModels)).toEqual([]);
+  });
+
+  it("validates quota and expiration input accurately", () => {
+    const vq = helpers.validateKeyQuotaInput;
+    expect(vq({ maxInputTokens: 100000, maxOutputTokens: 50000, expiresAt: null })).toEqual({
+      ok: true,
+      value: { maxInputTokens: 100000, maxOutputTokens: 50000, expiresAt: null },
+    });
+    expect(vq({ resetUsage: true })).toEqual({
+      ok: true,
+      value: { usedInputTokens: 0, usedOutputTokens: 0 },
+    });
+    expect(vq({ expiresAt: "2030-05-01T12:00:00.000Z" })).toEqual({
+      ok: true,
+      value: { expiresAt: "2030-05-01T12:00:00.000Z" },
+    });
+    expect(vq({ maxInputTokens: -5 }).ok).toBe(false);
+    expect(vq({ maxOutputTokens: -1 }).ok).toBe(false);
+    expect(vq({ expiresAt: "not-a-date" }).ok).toBe(false);
+  });
+});

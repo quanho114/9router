@@ -349,18 +349,28 @@ export async function clearAccountError(connectionId, currentConnection, model =
  */
 export function extractApiKey(request) {
   // Check Authorization header first
-  const authHeader = request.headers.get("Authorization");
+  const authHeader = request.headers?.get?.("Authorization");
   if (authHeader?.startsWith("Bearer ")) {
     return authHeader.slice(7);
   }
 
   // Check Anthropic x-api-key header
-  const xApiKey = request.headers.get("x-api-key");
+  const xApiKey = request.headers?.get?.("x-api-key");
   if (xApiKey) {
     return xApiKey;
   }
 
-  return null;
+  // Check Gemini x-goog-api-key header
+  const googKey = request.headers?.get?.("x-goog-api-key");
+  if (googKey) {
+    return googKey;
+  }
+
+  try {
+    return new URL(request.url).searchParams.get("key") || null;
+  } catch {
+    return null;
+  }
 }
 
 /**

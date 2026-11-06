@@ -26,6 +26,7 @@ import { getApiKeyByKey } from "@/lib/db/repos/apiKeysRepo.js";
 import { getCombos } from "@/lib/db/repos/combosRepo.js";
 import { getModelInfo, getComboModels } from "./model.js";
 import { resolveProviderId } from "@/shared/constants/providers.js";
+import * as keyAccessUtils from "@/shared/utils/keyAccess.js";
 import {
   KEY_ACCESS_COMBO_OWNER,
   KEY_ACCESS_PROVIDER_AS_MODEL_KINDS,
@@ -67,17 +68,54 @@ export function extractClientApiKey(request) {
  * Keys are only authenticated elsewhere (middleware / requireApiKey); this only
  * decides what an identified key may call.
  */
+function evaluateKeyStatus(record) {
+  if (typeof keyAccessUtils.checkKeyStatus === "function") {
+    return keyAccessUtils.checkKeyStatus(record);
+  }
+  if (!record) return { ok: false, reason: "invalid", status: 401, message: "Invalid API key" };
+  if (record.isActive === false || record.isActive === 0) {
+    return { ok: false, reason: "revoked", status: 403, message: "This API key has been revoked" };
+  }
+  if (typeof record.expiresAt === "string" && record.expiresAt.trim()) {
+    const expMs = Date.parse(record.expiresAt.trim());
+    if (Number.isFinite(expMs) && expMs <= Date.now()) {
+      return { ok: false, reason: "expired", status: 403, message: "This API key has expired" };
+    }
+  }
+  const maxIn = Number(record.maxInputTokens) > 0 ? Number(record.maxInputTokens) : 0;
+  const usedIn = Number(record.usedInputTokens) > 0 ? Number(record.usedInputTokens) : 0;
+  if (maxIn > 0 && usedIn >= maxIn) {
+    return { ok: false, reason: "input_quota_exceeded", status: 429, message: "Input token quota limit reached" };
+  }
+  const maxOut = Number(record.maxOutputTokens) > 0 ? Number(record.maxOutputTokens) : 0;
+  const usedOut = Number(record.usedOutputTokens) > 0 ? Number(record.usedOutputTokens) : 0;
+  if (maxOut > 0 && usedOut >= maxOut) {
+    return { ok: false, reason: "output_quota_exceeded", status: 429, message: "Output token quota limit reached" };
+  }
+  return { ok: true, reason: null, status: 200, message: null };
+}
+
 export async function getKeyAccessContext(request) {
   const apiKey = extractClientApiKey(request);
   if (!apiKey) return null;
   const record = await getApiKeyByKey(apiKey);
-  if (!record?.access?.restricted) return null;
+  if (!record) return null;
+  const statusCheck = evaluateKeyStatus(record);
+  const restricted = !!record?.access?.restricted;
+  if (statusCheck.ok && !restricted) return null;
   return {
     keyId: record.id,
     keyName: record.name || record.id,
-    allow: record.access.allow || [],
+    restricted,
+    allow: restricted ? (record.access.allow || []) : [],
+    deniedStatus: statusCheck.ok ? null : statusCheck,
     _sets: null,
   };
+}
+
+function keyStatusDeniedResponse(ctx) {
+  log.warn("AUTH", `key-access: key "${ctx.keyName}" rejected (${ctx.deniedStatus.reason})`);
+  return errorResponse(ctx.deniedStatus.status, ctx.deniedStatus.message);
 }
 
 // Resolve the allow list once per request: combo names, resolved model ids,
@@ -122,6 +160,8 @@ export function keyAccessDeniedResponse(ctx, requested) {
  */
 export async function enforceKeyAccess(ctx, requested) {
   if (!ctx) return null;
+  if (ctx.deniedStatus) return keyStatusDeniedResponse(ctx);
+  if (!ctx.restricted) return null;
   if (typeof requested !== "string" || !requested) return keyAccessDeniedResponse(ctx, String(requested ?? ""));
   const sets = await getAllowSets(ctx);
   const comboModels = await getComboModels(requested);
@@ -139,6 +179,8 @@ export async function enforceKeyAccess(ctx, requested) {
  */
 export async function enforceKeyAccessResolved(ctx, requested, provider, model) {
   if (!ctx) return null;
+  if (ctx.deniedStatus) return keyStatusDeniedResponse(ctx);
+  if (!ctx.restricted) return null;
   const label = requested || (provider ? `${provider}/${model ?? ""}` : "");
   if (!provider || !model) return keyAccessDeniedResponse(ctx, label);
   const sets = await getAllowSets(ctx);
@@ -151,6 +193,8 @@ export async function enforceKeyAccessResolved(ctx, requested, provider, model) 
  */
 export async function enforceKeyAccessProvider(ctx, requested, comboModels) {
   if (!ctx) return null;
+  if (ctx.deniedStatus) return keyStatusDeniedResponse(ctx);
+  if (!ctx.restricted) return null;
   if (typeof requested !== "string" || !requested) return keyAccessDeniedResponse(ctx, String(requested ?? ""));
   const sets = await getAllowSets(ctx);
   const allowed = comboModels
@@ -166,7 +210,7 @@ export async function enforceKeyAccessProvider(ctx, requested, comboModels) {
  * model just shortens the fallback list, so combo failover is unaffected.
  */
 export async function filterAdapterModels(ctx, augmented, original) {
-  if (!ctx || !Array.isArray(augmented)) return augmented;
+  if (!ctx || !ctx.restricted || !Array.isArray(augmented)) return augmented;
   const keep = new Set(original || []);
   const out = [];
   for (const m of augmented) {
@@ -179,6 +223,8 @@ export async function filterAdapterModels(ctx, augmented, original) {
 /** /v1/models: a restricted key sees only the combos and models it may call. */
 export async function filterModelsListForKey(ctx, list) {
   if (!ctx || !Array.isArray(list)) return list;
+  if (ctx.deniedStatus) return [];
+  if (!ctx.restricted) return list;
   const sets = await getAllowSets(ctx);
   const out = [];
   for (const entry of list) {

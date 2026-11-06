@@ -4,7 +4,7 @@
   "description": "9Router web dashboard",
   "private": true,
   "scripts": {
-    "dev": "next dev --hostname 127.0.0.1 --port 3999",
+    "dev": "next dev --webpack --hostname 127.0.0.1 --port 3999",
     "dev:webpack": "next dev --webpack --hostname 127.0.0.1 --port 3999",
     "build": "next build --webpack",
     "postbuild": "node scripts/copy-standalone-assets.mjs",

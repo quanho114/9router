@@ -221,6 +221,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const [providersLoaded, setProvidersLoaded] = useState(() => cachedProvidersList !== null);
   const [periodLocal, setPeriodLocal] = useState("today");
   const hasLoadedStats = useRef(false);
+  const liveStats = useRef(null);
   const period = periodProp ?? periodLocal;
   const setPeriod = setPeriodProp ?? setPeriodLocal;
 
@@ -295,7 +296,8 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         if (cancelled || !data) return;
         hasLoadedStats.current = true;
         statsCacheByPeriod.set(period, data);
-        setStats((prev) => ({ ...prev, ...data }));
+        // SSE may have already reported completion while this REST read was running.
+        setStats((prev) => ({ ...prev, ...data, ...liveStats.current }));
       })
       .catch(() => {})
       .finally(() => {
@@ -316,15 +318,18 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
     es.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
+        liveStats.current = {
+          activeRequests: data.activeRequests,
+          recentRequests: data.recentRequests,
+          errorProvider: data.errorProvider,
+          pending: data.pending,
+        };
         // Always merge only real-time fields, never overwrite full stats from REST
         setStats((prev) => {
           if (!prev) return prev;
           return {
             ...prev,
-            activeRequests: data.activeRequests,
-            recentRequests: data.recentRequests,
-            errorProvider: data.errorProvider,
-            pending: data.pending,
+            ...liveStats.current,
           };
         });
       } catch (err) {

@@ -79,7 +79,20 @@ export async function exportDb() {
     providerConnections: db.all(`SELECT * FROM providerConnections`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, provider: r.provider, authType: r.authType, name: r.name, email: r.email, priority: r.priority, isActive: r.isActive === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     providerNodes: db.all(`SELECT * FROM providerNodes`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, type: r.type, name: r.name, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
-    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt, access: keyAccessFromColumns(r.accessRestricted, r.accessAllow) })),
+    apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({
+      id: r.id,
+      key: r.key,
+      name: r.name,
+      machineId: r.machineId,
+      isActive: r.isActive === 1,
+      createdAt: r.createdAt,
+      access: keyAccessFromColumns(r.accessRestricted, r.accessAllow),
+      maxInputTokens: Number(r.maxInputTokens) > 0 ? Math.floor(Number(r.maxInputTokens)) : 0,
+      maxOutputTokens: Number(r.maxOutputTokens) > 0 ? Math.floor(Number(r.maxOutputTokens)) : 0,
+      usedInputTokens: Number(r.usedInputTokens) > 0 ? Math.floor(Number(r.usedInputTokens)) : 0,
+      usedOutputTokens: Number(r.usedOutputTokens) > 0 ? Math.floor(Number(r.usedOutputTokens)) : 0,
+      expiresAt: typeof r.expiresAt === "string" && r.expiresAt.trim() ? r.expiresAt.trim() : null,
+    })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
     customModels: [],
@@ -147,9 +160,14 @@ export async function importDb(payload) {
         access = checked.value;
       }
       const cols = keyAccessToColumns(access);
+      const maxInputTokens = Number(k.maxInputTokens) > 0 ? Math.floor(Number(k.maxInputTokens)) : 0;
+      const maxOutputTokens = Number(k.maxOutputTokens) > 0 ? Math.floor(Number(k.maxOutputTokens)) : 0;
+      const usedInputTokens = Number(k.usedInputTokens) > 0 ? Math.floor(Number(k.usedInputTokens)) : 0;
+      const usedOutputTokens = Number(k.usedOutputTokens) > 0 ? Math.floor(Number(k.usedOutputTokens)) : 0;
+      const expiresAt = typeof k.expiresAt === "string" && k.expiresAt.trim() ? k.expiresAt.trim() : null;
       db.run(
-        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(), cols.accessRestricted, cols.accessAllow]
+        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow, maxInputTokens, maxOutputTokens, usedInputTokens, usedOutputTokens, expiresAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(), cols.accessRestricted, cols.accessAllow, maxInputTokens, maxOutputTokens, usedInputTokens, usedOutputTokens, expiresAt]
       );
     }
     for (const c of payload.combos || []) {

@@ -2,6 +2,7 @@ import { EventEmitter } from "events";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { getMeta, setMeta } from "../helpers/metaStore.js";
+import { ensureApiKeysColumns } from "./apiKeysRepo.js";
 
 function maskApiKey(key) {
   if (!key || typeof key !== "string") return null;
@@ -198,6 +199,7 @@ export function trackPendingRequest(model, provider, connectionId, started, erro
 export async function getActiveRequests() {
   const activeRequests = [];
   const connectionMap = await getConnectionMapCached();
+  await ensureRingInitialized();
 
   for (const [connectionId, models] of Object.entries(pendingRequests.byAccount)) {
     for (const [modelKey, count] of Object.entries(models)) {
@@ -213,7 +215,6 @@ export async function getActiveRequests() {
     }
   }
 
-  await ensureRingInitialized();
   const seen = new Set();
   const recentRequests = [...recentRing.items]
     .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
@@ -237,12 +238,19 @@ export async function getActiveRequests() {
     .slice(0, 20);
 
   const errorProvider = (Date.now() - lastErrorProvider.ts < 10000) ? lastErrorProvider.provider : "";
-  return { activeRequests, recentRequests, errorProvider };
+  return {
+    activeRequests, recentRequests, errorProvider,
+    pending: {
+      byModel: { ...pendingRequests.byModel },
+      byAccount: Object.fromEntries(Object.entries(pendingRequests.byAccount).map(([id, models]) => [id, { ...models }])),
+    },
+  };
 }
 
 export async function saveRequestUsage(entry) {
   try {
     const db = await getAdapter();
+    ensureApiKeysColumns(db);
 
     if (!entry.timestamp) entry.timestamp = new Date().toISOString();
     entry.cost = await calculateCost(entry.provider, entry.model, entry.tokens);
@@ -303,6 +311,18 @@ export async function saveRequestUsage(entry) {
       const cur = db.get(`SELECT value FROM _meta WHERE key = 'totalRequestsLifetime'`);
       const next = (cur ? parseInt(cur.value, 10) : 0) + 1;
       db.run(`INSERT INTO _meta(key, value) VALUES('totalRequestsLifetime', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, [String(next)]);
+
+      // Increment per-API-key token counters for fixed quota enforcement
+      if (entry.apiKey && typeof entry.apiKey === "string" && (promptTokens > 0 || completionTokens > 0)) {
+        db.run(
+          `UPDATE apiKeys
+           SET usedInputTokens = COALESCE(usedInputTokens, 0) + ?,
+               usedOutputTokens = COALESCE(usedOutputTokens, 0) + ?
+           WHERE key = ?`,
+          [promptTokens, completionTokens, entry.apiKey]
+        );
+      }
+
       inserted = true;
     });
 

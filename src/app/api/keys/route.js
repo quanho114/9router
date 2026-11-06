@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getApiKeys, createApiKey } from "@/lib/localDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
+import { validateKeyAccessInput, validateKeyQuotaInput } from "@/shared/utils/keyAccess.js";
 
 export const dynamic = "force-dynamic";
 
@@ -19,21 +20,35 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name } = body;
+    const { name, access, maxInputTokens, maxOutputTokens, expiresAt } = body;
 
-    if (!name) {
+    if (!name || typeof name !== "string" || !name.trim()) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
     }
 
+    const options = {};
+    if (access !== undefined) {
+      const checked = validateKeyAccessInput(access);
+      if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 });
+      options.access = checked.value;
+    }
+
+    const quotaChecked = validateKeyQuotaInput({ maxInputTokens, maxOutputTokens, expiresAt });
+    if (!quotaChecked.ok) {
+      return NextResponse.json({ error: quotaChecked.error }, { status: 400 });
+    }
+    Object.assign(options, quotaChecked.value);
+
     // Always get machineId from server
     const machineId = await getConsistentMachineId();
-    const apiKey = await createApiKey(name, machineId);
+    const apiKey = await createApiKey(name.trim(), machineId, options);
 
     return NextResponse.json({
       key: apiKey.key,
       name: apiKey.name,
       id: apiKey.id,
       machineId: apiKey.machineId,
+      apiKey,
     }, { status: 201 });
   } catch (error) {
     console.log("Error creating key:", error);

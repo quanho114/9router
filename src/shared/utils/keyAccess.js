@@ -78,3 +78,113 @@ export function validateKeyAccessInput(input) {
   }
   return { ok: true, value: { restricted: input.restricted, allow: normalizeAllowList(allow) } };
 }
+
+/**
+ * Evaluate whether a key record is currently usable (active, not expired, and
+ * within its configured input/output token limits).
+ * @param {object} record
+ * @param {number} [nowMs]
+ */
+export function checkKeyStatus(record, nowMs = Date.now()) {
+  if (!record) {
+    return { ok: false, reason: "invalid", status: 401, message: "Invalid API key" };
+  }
+  if (record.isActive === false || record.isActive === 0) {
+    return { ok: false, reason: "revoked", status: 403, message: "This API key has been revoked" };
+  }
+  if (typeof record.expiresAt === "string" && record.expiresAt.trim()) {
+    const expMs = Date.parse(record.expiresAt.trim());
+    if (Number.isFinite(expMs) && expMs <= nowMs) {
+      return { ok: false, reason: "expired", status: 403, message: "This API key has expired" };
+    }
+  }
+  const maxIn = Number(record.maxInputTokens) > 0 ? Number(record.maxInputTokens) : 0;
+  const usedIn = Number(record.usedInputTokens) > 0 ? Number(record.usedInputTokens) : 0;
+  if (maxIn > 0 && usedIn >= maxIn) {
+    return {
+      ok: false,
+      reason: "input_quota_exceeded",
+      status: 429,
+      message: `This API key has reached its input token quota limit (${usedIn.toLocaleString("en-US")} / ${maxIn.toLocaleString("en-US")})`,
+    };
+  }
+  const maxOut = Number(record.maxOutputTokens) > 0 ? Number(record.maxOutputTokens) : 0;
+  const usedOut = Number(record.usedOutputTokens) > 0 ? Number(record.usedOutputTokens) : 0;
+  if (maxOut > 0 && usedOut >= maxOut) {
+    return {
+      ok: false,
+      reason: "output_quota_exceeded",
+      status: 429,
+      message: `This API key has reached its output token quota limit (${usedOut.toLocaleString("en-US")} / ${maxOut.toLocaleString("en-US")})`,
+    };
+  }
+  return { ok: true, reason: null, status: 200, message: null };
+}
+
+/**
+ * Validate optional quota & expiration fields on key create/update.
+ */
+export function validateKeyQuotaInput(input = {}) {
+  const out = {};
+
+  if (input.maxInputTokens !== undefined) {
+    if (input.maxInputTokens === null || input.maxInputTokens === "") {
+      out.maxInputTokens = 0;
+    } else {
+      const n = Number(input.maxInputTokens);
+      if (!Number.isFinite(n) || n < 0) {
+        return { ok: false, error: "maxInputTokens must be a non-negative number" };
+      }
+      out.maxInputTokens = Math.floor(n);
+    }
+  }
+
+  if (input.maxOutputTokens !== undefined) {
+    if (input.maxOutputTokens === null || input.maxOutputTokens === "") {
+      out.maxOutputTokens = 0;
+    } else {
+      const n = Number(input.maxOutputTokens);
+      if (!Number.isFinite(n) || n < 0) {
+        return { ok: false, error: "maxOutputTokens must be a non-negative number" };
+      }
+      out.maxOutputTokens = Math.floor(n);
+    }
+  }
+
+  if (input.usedInputTokens !== undefined) {
+    const n = Number(input.usedInputTokens);
+    if (!Number.isFinite(n) || n < 0) {
+      return { ok: false, error: "usedInputTokens must be a non-negative number" };
+    }
+    out.usedInputTokens = Math.floor(n);
+  }
+
+  if (input.usedOutputTokens !== undefined) {
+    const n = Number(input.usedOutputTokens);
+    if (!Number.isFinite(n) || n < 0) {
+      return { ok: false, error: "usedOutputTokens must be a non-negative number" };
+    }
+    out.usedOutputTokens = Math.floor(n);
+  }
+
+  if (input.resetUsage === true) {
+    out.usedInputTokens = 0;
+    out.usedOutputTokens = 0;
+  }
+
+  if (input.expiresAt !== undefined) {
+    if (input.expiresAt === null || input.expiresAt === "") {
+      out.expiresAt = null;
+    } else if (typeof input.expiresAt === "string") {
+      const parsed = Date.parse(input.expiresAt.trim());
+      if (Number.isNaN(parsed)) {
+        return { ok: false, error: "expiresAt must be a valid ISO date string or null" };
+      }
+      out.expiresAt = new Date(parsed).toISOString();
+    } else {
+      return { ok: false, error: "expiresAt must be a valid ISO date string or null" };
+    }
+  }
+
+  return { ok: true, value: out };
+}

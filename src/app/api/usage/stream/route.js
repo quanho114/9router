@@ -2,77 +2,75 @@ import { getUsageStats, statsEmitter, getActiveRequests } from "@/lib/usageDb";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request) {
   const encoder = new TextEncoder();
-  const state = { closed: false, keepalive: null, send: null, sendPending: null, cachedStats: null };
+  let closed = false;
+  let refreshTimer;
+  let sending = false;
+  let pending = false;
+  let fullRefresh = false;
+  let cachedStats = null;
+  let controller;
+
+  function close() {
+    if (closed) return;
+    closed = true;
+    clearInterval(refreshTimer);
+    statsEmitter.off("update", sendFull);
+    statsEmitter.off("pending", sendPending);
+    request?.signal?.removeEventListener("abort", close);
+    try { controller?.close(); } catch {}
+  }
+
+  // Serialize reads: a slow full refresh must not overwrite a newer completion.
+  async function send(full = false) {
+    if (closed) return;
+    pending = true;
+    fullRefresh ||= full;
+    if (sending) return;
+    sending = true;
+    try {
+      while (pending && !closed) {
+        pending = false;
+        const refresh = fullRefresh;
+        fullRefresh = false;
+        if (refresh || !cachedStats) cachedStats = await getUsageStats();
+        const live = await getActiveRequests();
+        if (closed) return;
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ ...cachedStats, ...live })}\n\n`));
+      }
+    } catch {
+      close();
+    } finally {
+      sending = false;
+    }
+  }
+
+  const sendFull = () => { void send(true); };
+  const sendPending = () => { void send(); };
 
   const stream = new ReadableStream({
-    async start(controller) {
-      // Full stats refresh (heavy) + immediate lightweight push
-      state.send = async () => {
-        if (state.closed) return;
-        try {
-          // Push lightweight update immediately so UI reflects changes fast
-          if (state.cachedStats) {
-            const { activeRequests, recentRequests, errorProvider } = await getActiveRequests();
-            const quickStats = { ...state.cachedStats, activeRequests, recentRequests, errorProvider };
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(quickStats)}\n\n`));
-          }
-          // Then do full recalc and update cache
-          const stats = await getUsageStats();
-          state.cachedStats = stats;
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(stats)}\n\n`));
-        } catch {
-          state.closed = true;
-          statsEmitter.off("update", state.send);
-          statsEmitter.off("pending", state.sendPending);
-          clearInterval(state.keepalive);
-        }
-      };
-
-      // Lightweight push: only refresh activeRequests + recentRequests on pending changes
-      state.sendPending = async () => {
-        if (state.closed || !state.cachedStats) return;
-        try {
-          const { activeRequests, recentRequests, errorProvider } = await getActiveRequests();
-          const stats = { ...state.cachedStats, activeRequests, recentRequests, errorProvider };
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(stats)}\n\n`));
-        } catch {
-          state.closed = true;
-          statsEmitter.off("update", state.send);
-          statsEmitter.off("pending", state.sendPending);
-          clearInterval(state.keepalive);
-        }
-      };
-
-      await state.send();
-
-      statsEmitter.on("update", state.send);
-      statsEmitter.on("pending", state.sendPending);
-
-      state.keepalive = setInterval(() => {
-        if (state.closed) { clearInterval(state.keepalive); return; }
-        try {
-          controller.enqueue(encoder.encode(": ping\n\n"));
-        } catch {
-          state.closed = true;
-          clearInterval(state.keepalive);
-        }
-      }, 25000);
+    start(streamController) {
+      controller = streamController;
+      // Listen before the initial read so completions during startup aren't lost.
+      statsEmitter.on("update", sendFull);
+      statsEmitter.on("pending", sendPending);
+      request?.signal?.addEventListener("abort", close, { once: true });
+      if (request?.signal?.aborted) { close(); return; }
+      // Reconcile missed events without repeatedly querying historical usage.
+      // These lightweight snapshots also keep the SSE connection alive.
+      refreshTimer = setInterval(sendPending, 3000);
+      refreshTimer.unref?.();
+      sendFull();
     },
-
-    cancel() {
-      state.closed = true;
-      statsEmitter.off("update", state.send);
-      statsEmitter.off("pending", state.sendPending);
-      clearInterval(state.keepalive);
-    },
+    cancel: close,
   });
 
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
       Connection: "keep-alive",
     },
   });
