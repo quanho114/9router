@@ -5,6 +5,7 @@ import PropTypes from "prop-types";
 import {
   Card,
   CardSkeleton,
+  ProvidersGridSkeleton,
   Badge,
   Button,
   Toggle,
@@ -385,12 +386,7 @@ export default function ProvidersPage() {
     });
 
   if (loading) {
-    return (
-      <div className="flex flex-col gap-8">
-        <CardSkeleton />
-        <CardSkeleton />
-      </div>
-    );
+    return <ProvidersGridSkeleton count={12} />;
   }
 
   const hasAnyResult =

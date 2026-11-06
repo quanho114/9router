@@ -2,7 +2,7 @@ import pkg from "../../../package.json" with { type: "json" };
 
 // App configuration
 export const APP_CONFIG = {
-  name: "9Router Proxy",
+  name: "Dolphin Router",
   description: "AI Infrastructure Management",
   version: pkg.version,
 };
@@ -91,11 +91,42 @@ export const QUOTA_AUTOPING_CONFIG = {
     },
     antigravity: {
       settingsKey: "antigravityAutoPing",
-      quotaKey: "gemini_weekly",
-      quotaFallbackKeys: ["gemini_session", "argon_weekly", "argon_session", "gemini-3.8-flash-low", "gemini-3.7-flash-low"],
+      quotaKey: "gemini-3.8-flash-low",
+      quotaFallbackKeys: [
+        "gemini-3.7-flash-low",
+        "gemini_session",
+        "argon_session",
+        "gemini-4-argon-low",
+        "gemini_weekly",
+        "argon_weekly",
+      ],
+      pingWhenResetAtSlides: true,
+      pingWhenResetPasses: true,
+      resetAtDriftMs: 30000,
+      minPingIntervalMs: 600000,
       pingModel: "gemini-3.8-flash-low",
       pingText: "hi",
       pingMaxTokens: 1,
+      familyTargets: [
+        {
+          id: "gemini",
+          pingModel: "gemini-3.8-flash-low",
+          quotaKeys: ["gemini-3.8-flash-low", "gemini-3.7-flash-low", "gemini_session", "gemini_weekly"],
+          blockingQuotaKeys: ["gemini_weekly"],
+        },
+        {
+          id: "argon",
+          pingModel: "gemini-4-argon-low",
+          quotaKeys: ["argon_session", "gemini-4-argon-low", "argon_weekly"],
+          blockingQuotaKeys: ["argon_weekly"],
+        },
+        {
+          id: "claude_gpt",
+          pingModel: "claude-sonnet-4-6",
+          quotaKeys: ["claude_gpt_session", "claude-sonnet-4-6", "claude_gpt_weekly"],
+          blockingQuotaKeys: ["claude_gpt_weekly"],
+        },
+      ],
     },
     "gemini-cli": {
       settingsKey: "geminiCliAutoPing",

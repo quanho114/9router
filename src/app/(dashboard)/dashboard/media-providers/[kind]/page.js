@@ -3,7 +3,7 @@
 import { useParams, notFound, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Card, Badge, Button, Toggle, AddCustomEmbeddingModal } from "@/shared/components";
+import { Card, Badge, Button, Toggle, AddCustomEmbeddingModal, ProvidersGridSkeleton } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS, getProvidersByKind } from "@/shared/constants/providers";
 
@@ -143,6 +143,7 @@ export default function MediaProviderKindPage() {
   const [connections, setConnections] = useState([]);
   const [customNodes, setCustomNodes] = useState([]);
   const [combos, setCombos] = useState([]);
+  const [loadedKind, setLoadedKind] = useState(null);
   const [showAddCustomEmbedding, setShowAddCustomEmbedding] = useState(false);
 
   // webSearch/webFetch listing pages are merged into /web
@@ -158,25 +159,42 @@ export default function MediaProviderKindPage() {
 
   useEffect(() => {
     if (!kindConfig) return;
-    fetch("/api/providers", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => setConnections(d.connections || []))
-      .catch(() => {});
-    if (isEmbedding) {
-      fetch("/api/provider-nodes", { cache: "no-store" })
+    let cancelled = false;
+    const tasks = [
+      fetch("/api/providers", { cache: "no-store" })
         .then((r) => r.json())
-        .then((d) => setCustomNodes((d.nodes || []).filter((n) => n.type === "custom-embedding")))
-        .catch(() => {});
+        .then((d) => { if (!cancelled) setConnections(d.connections || []); })
+        .catch(() => {}),
+    ];
+    if (isEmbedding) {
+      tasks.push(
+        fetch("/api/provider-nodes", { cache: "no-store" })
+          .then((r) => r.json())
+          .then((d) => {
+            if (!cancelled) {
+              setCustomNodes((d.nodes || []).filter((n) => n.type === "custom-embedding"));
+            }
+          })
+          .catch(() => {})
+      );
     }
     if (supportsCombo) {
-      fetch("/api/combos", { cache: "no-store" })
-        .then((r) => r.json())
-        .then((d) => setCombos(d.combos || []))
-        .catch(() => {});
+      tasks.push(
+        fetch("/api/combos", { cache: "no-store" })
+          .then((r) => r.json())
+          .then((d) => { if (!cancelled) setCombos(d.combos || []); })
+          .catch(() => {})
+      );
     }
-  }, [isEmbedding, supportsCombo, kindConfig]);
-
+    Promise.allSettled(tasks).finally(() => {
+      if (!cancelled) setLoadedKind(kind);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isEmbedding, supportsCombo, kindConfig, kind]);
   if (!kindConfig) return notFound();
+  if (loadedKind !== kind) return <ProvidersGridSkeleton count={8} />;
 
   const providers = getProvidersByKind(kind);
   const kindCombos = combos.filter((c) => c.kind === kind);

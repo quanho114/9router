@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Card, Badge, Button } from "@/shared/components";
+import { Card, Badge, Button, ProvidersGridSkeleton } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS, getProvidersByKind } from "@/shared/constants/providers";
 
@@ -147,6 +147,7 @@ export default function WebProvidersPage() {
   const router = useRouter();
   const [connections, setConnections] = useState([]);
   const [combos, setCombos] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const fetchAll = async () => {
     try {
@@ -157,11 +158,15 @@ export default function WebProvidersPage() {
       if (connsRes.ok) setConnections((await connsRes.json()).connections || []);
       if (combosRes.ok) setCombos((await combosRes.json()).combos || []);
     } catch { /* noop */ }
+    finally {
+      setLoading(false);
+    }
   };
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchAll(); }, []);
 
+  if (loading) return <ProvidersGridSkeleton count={8} />;
   const searchProviders = getProvidersByKind("webSearch");
   const fetchProviders = getProvidersByKind("webFetch");
   const searchCombos = combos.filter((c) => c.kind === "webSearch");

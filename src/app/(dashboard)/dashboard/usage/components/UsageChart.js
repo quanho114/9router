@@ -34,17 +34,26 @@ const VIEW_CONFIG = {
   cost:     { dataKey: "cost",     color: "#f59e0b", gradId: "gradCost",     formatter: fmtCost,     label: "Cost" },
 };
 
+const chartDataCache = new Map();
+
 export default function UsageChart({ period = "7d" }) {
-  const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(() => chartDataCache.get(period) || []);
+  const [loading, setLoading] = useState(() => !chartDataCache.has(period));
   const [viewMode, setViewMode] = useState("tokens");
 
   const fetchData = useCallback(async () => {
-    setLoading(true);
+    const cached = chartDataCache.get(period);
+    if (cached) {
+      setData(cached);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     try {
       const res = await fetch(`/api/usage/chart?period=${period}`);
       if (res.ok) {
         const json = await res.json();
+        chartDataCache.set(period, json);
         setData(json);
       }
     } catch (e) {

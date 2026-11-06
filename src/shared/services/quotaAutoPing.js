@@ -26,7 +26,7 @@ const providerHandlers = {
     sendPing: sendCodexPing,
   },
   antigravity: {
-    getUsage: (accessToken, proxyOptions, connection) => getAntigravityUsage(accessToken, connection?.providerSpecificData, proxyOptions),
+    getUsage: (accessToken, proxyOptions, connection) => getAntigravityUsage(accessToken, connection?.providerSpecificData, proxyOptions, { bypassCache: true }),
     sendPing: sendAntigravityPing,
   },
   "gemini-cli": {
@@ -94,13 +94,29 @@ function hasExhaustedBlockingQuota(quotas, sessionKey) {
   return Object.entries(quotas || {}).some(([name, quota]) => isBlockingQuotaName(name, sessionKey) && isQuotaExhausted(quota));
 }
 
-function shouldPingForReset(providerConfig, cachedReset, resetAt, now) {
-  if (providerConfig.pingWhenResetAtSlides) {
-    return Boolean(cachedReset) && getResetDriftMs(cachedReset, resetAt) >= (providerConfig.resetAtDriftMs || 0);
+function shouldPingForReset(providerConfig, cachedReset, resetAt, now, lastPingedResetKey) {
+  const slides = Boolean(cachedReset) && getResetDriftMs(cachedReset, resetAt) >= (providerConfig.resetAtDriftMs || 0);
+  if (providerConfig.pingWhenResetAtSlides && !providerConfig.pingWhenResetPasses) {
+    return slides;
+  }
+
+  if (providerConfig.pingWhenResetAtSlides && slides) {
+    return true;
   }
 
   const resetMs = new Date(resetAt).getTime();
-  return Number.isFinite(resetMs) && now >= resetMs - C.pingLeadMs;
+  if (Number.isFinite(resetMs) && now >= resetMs - C.pingLeadMs) {
+    return true;
+  }
+
+  // If the 60s tick runs slightly after `cachedReset` passed and upstream has already
+  // rolled `resetAt` forward to the next window, still fire for the just-passed reset.
+  const cachedResetMs = new Date(cachedReset).getTime();
+  if (Number.isFinite(cachedResetMs) && now >= cachedResetMs - C.pingLeadMs) {
+    return normalizeResetKey(cachedReset) !== lastPingedResetKey;
+  }
+
+  return false;
 }
 
 function getConnectionSchedule(settings, providerConfig, connectionId) {
@@ -279,6 +295,62 @@ function resolveProviderQuota(quotas, providerConfig) {
   return null;
 }
 
+function resolveFamilyQuota(quotas, family) {
+  if (!quotas || typeof quotas !== "object" || !Array.isArray(family?.quotaKeys)) return null;
+  for (const k of family.quotaKeys) {
+    if (quotas[k]) return quotas[k];
+  }
+  return null;
+}
+
+function isFamilyBlocked(quotas, family) {
+  if (!Array.isArray(family?.blockingQuotaKeys)) return false;
+  return family.blockingQuotaKeys.some((k) => quotas?.[k] && isQuotaExhausted(quotas[k]));
+}
+
+async function pingSecondaryFamilies(connection, provider, providerConfig, handler, proxyOptions, deps, quotas, state, now, slotPending) {
+  if (!Array.isArray(providerConfig.familyTargets)) return;
+  state.familyPingResetKey ??= {};
+  state.familyPingAt ??= {};
+
+  for (const family of providerConfig.familyTargets) {
+    if (!family?.id || family.id === "gemini") continue;
+    const familyQuota = resolveFamilyQuota(quotas, family);
+    const familyResetAt = familyQuota?.resetAt;
+    if (!familyResetAt) continue;
+
+    const familyCacheKey = `${cacheKey(provider, connection.id)}:${family.id}`;
+    const cachedFamilyReset = state.resetCache[familyCacheKey];
+    state.resetCache[familyCacheKey] = familyResetAt;
+
+    if (isFamilyBlocked(quotas, family) || isQuotaExhausted(familyQuota)) continue;
+
+    const familyResetKey = normalizeResetKey(familyResetAt);
+    const lastFamilyResetKey = state.familyPingResetKey[familyCacheKey];
+    const lastFamilyPingAt = state.familyPingAt[familyCacheKey];
+
+    if (slotPending) {
+      if (wasPingedRecently({ lastPingAt: lastFamilyPingAt }, providerConfig.minPingIntervalMs, now)) continue;
+    } else {
+      if (!shouldPingForReset(providerConfig, cachedFamilyReset, familyResetAt, now, lastFamilyResetKey)) continue;
+      if (wasPingedRecently({ lastPingAt: lastFamilyPingAt }, providerConfig.minPingIntervalMs, now)) continue;
+      if (lastFamilyResetKey === familyResetKey) continue;
+    }
+
+    const ok = await handler.sendPing(
+      connection,
+      { ...providerConfig, pingModel: family.pingModel },
+      proxyOptions,
+      deps
+    );
+    if (ok) {
+      state.familyPingResetKey[familyCacheKey] = familyResetKey;
+      state.familyPingAt[familyCacheKey] = new Date(now).toISOString();
+      console.log(`[AutoPing] ${provider}:${connection.id} (${family.id}): ping sent (reset ${familyResetAt})`);
+    }
+  }
+}
+
 function shouldSkipAfterFailure(state, key, nowMs = Date.now()) {
   const failedAt = state.failureCache[key];
   return failedAt && nowMs - failedAt < C.failureCooldownMs;
@@ -321,16 +393,18 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
   const resetAt = quota?.resetAt;
   if (resetAt) state.resetCache[key] = resetAt;
 
+  const now = Date.now();
+  const dueSlot = schedule ? getDuePingSlot(schedule, now) : null;
+  const slotPending = Boolean(dueSlot) && connection.lastPingedSlotKey !== dueSlot.key;
+
+  if (reactive || slotPending) {
+    await pingSecondaryFamilies(connection, provider, providerConfig, handler, proxyOptions, deps, quotas, state, now, slotPending);
+  }
+
   if (providerConfig.skipWhenBlockingQuotaExhausted && hasExhaustedBlockingQuota(quotas, providerConfig.quotaKey)) return;
   if (isQuotaExhausted(quota)) return;
 
-  const now = Date.now();
   const resetKey = resetAt ? normalizeResetKey(resetAt) : null;
-
-  // Anchored schedule runs alongside the reactive path: it fires on its own wall-clock
-  // slots, whether or not the provider reported a reset.
-  const dueSlot = schedule ? getDuePingSlot(schedule, now) : null;
-  const slotPending = Boolean(dueSlot) && connection.lastPingedSlotKey !== dueSlot.key;
 
   if (slotPending) {
     if (wasPingedRecently(connection, providerConfig.minPingIntervalMs, now)) return;
@@ -340,7 +414,7 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
     const lastPingedResetKey = connection.lastPingedResetKey || normalizeResetKey(connection.lastPingedResetAt);
 
     // Claude waits for reset. Codex pings only when resetAt slides, which means the 5h window is inactive.
-    if (!shouldPingForReset(providerConfig, cachedReset, resetAt, now)) return;
+    if (!shouldPingForReset(providerConfig, cachedReset, resetAt, now, lastPingedResetKey)) return;
     if (wasPingedRecently(connection, providerConfig.minPingIntervalMs, now)) return;
     if (lastPingedResetKey === resetKey) return;
   }
@@ -416,12 +490,15 @@ export async function runQuotaAutoPingTick(deps = createDefaultDeps(), state = g
 }
 
 export function startQuotaAutoPing() {
+  g.tick = runQuotaAutoPingTick;
+  runQuotaAutoPingTick().catch(() => {});
   if (g.interval) return;
   console.log("[AutoPing] scheduler started");
-  runQuotaAutoPingTick().catch(() => {});
-  g.interval = setInterval(() => { runQuotaAutoPingTick().catch(() => {}); }, C.tickIntervalMs);
+  g.interval = setInterval(() => { (g.tick || runQuotaAutoPingTick)().catch(() => {}); }, C.tickIntervalMs);
   if (g.interval.unref) g.interval.unref();
 }
+
+g.tick = runQuotaAutoPingTick;
 
 export function stopQuotaAutoPing() {
   if (!g.interval) return;

@@ -94,7 +94,7 @@ ProviderNode.propTypes = {
   data: PropTypes.object.isRequired,
 };
 
-// Center 9Router node — pulse/glow on card only (no expanding rings)
+// Center Dolphin Router node — pulse/glow on card only (no expanding rings)
 function RouterNode({ data }) {
   const powering = (data.activeCount || 0) > 0;
   return (
@@ -112,13 +112,13 @@ function RouterNode({ data }) {
 
       <img
         src="/favicon.svg"
-        alt="9Router"
+        alt="Dolphin Router"
         className={`w-6 h-6 mr-2 ${powering ? "topology-router-icon" : ""}`}
         loading="lazy"
         decoding="async"
       />
       <span className={`text-sm font-bold ${powering ? "topology-router-label text-yellow-300" : "text-primary"}`}>
-        9Router
+        Dolphin Router
       </span>
       {data.activeCount > 0 && (
         <span className="ml-2 px-1.5 py-0.5 rounded-full bg-yellow-400 text-black text-xs font-bold topology-router-badge">
@@ -354,7 +354,13 @@ function buildLayout(providers, activeSet, lastSet, errorSet) {
   return { nodes, edges };
 }
 
-export default function ProviderTopology({ providers = [], activeRequests = [], lastProvider = "", errorProvider = "" }) {
+export default function ProviderTopology({
+  providers = [],
+  providersLoading = false,
+  activeRequests = [],
+  lastProvider = "",
+  errorProvider = "",
+}) {
   // Serialize to stable string keys so useMemo only re-runs when values actually change
   const activeKey = useMemo(
     () => activeRequests.map((r) => r.provider?.toLowerCase()).filter(Boolean).sort().join(","),
@@ -411,34 +417,52 @@ export default function ProviderTopology({ providers = [], activeRequests = [], 
 
   const rfInstance = useRef(null);
   const containerRef = useRef(null);
-  const fitOpts = { padding: 0.2, duration: 200 };
-  const onInit = useCallback((instance) => {
-    rfInstance.current = instance;
-    setTimeout(() => instance.fitView(fitOpts), 50);
+  const fitOpts = { padding: 0.2 };
+
+  const safeFitView = useCallback(() => {
+    const el = containerRef.current;
+    if (!el || el.clientWidth === 0 || el.clientHeight === 0) return;
+    if (rfInstance.current) {
+      rfInstance.current.fitView(fitOpts);
+    }
   }, []);
 
-  // Re-fit on container resize
+  const onInit = useCallback((instance) => {
+    rfInstance.current = instance;
+    setTimeout(() => safeFitView(), 30);
+    setTimeout(() => safeFitView(), 180);
+  }, [safeFitView]);
+
+  // Re-fit on container resize (ignore 0x0 when hidden during route transitions)
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => {
-      if (rfInstance.current) rfInstance.current.fitView(fitOpts);
+    const ro = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (!rect || rect.width === 0 || rect.height === 0) return;
+      safeFitView();
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [safeFitView]);
 
   // Re-fit when node count/layout changes
   useEffect(() => {
-    if (rfInstance.current) {
-      const id = setTimeout(() => rfInstance.current.fitView(fitOpts), 50);
-      return () => clearTimeout(id);
-    }
-  }, [nodes.length]);
+    const id1 = setTimeout(() => safeFitView(), 40);
+    const id2 = setTimeout(() => safeFitView(), 200);
+    return () => {
+      clearTimeout(id1);
+      clearTimeout(id2);
+    };
+  }, [nodes.length, providersKey, safeFitView]);
 
   return (
     <div ref={containerRef} className="h-[320px] w-full min-w-0 rounded-lg border border-border bg-bg-subtle/30 sm:h-[480px]">
-      {providers.length === 0 ? (
+      {providersLoading && providers.length === 0 ? (
+        <div className="h-full flex items-center justify-center text-text-muted text-sm">
+          Loading providers...
+        </div>
+      ) : providers.length === 0 ? (
         <div className="h-full flex items-center justify-center text-text-muted text-sm">
           No providers connected
         </div>
@@ -477,6 +501,7 @@ ProviderTopology.propTypes = {
     provider: PropTypes.string,
     name: PropTypes.string,
   })),
+  providersLoading: PropTypes.bool,
   activeRequests: PropTypes.arrayOf(PropTypes.shape({
     provider: PropTypes.string,
     model: PropTypes.string,

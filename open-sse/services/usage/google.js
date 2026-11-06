@@ -117,7 +117,7 @@ async function getGeminiSubscriptionInfo(accessToken, proxyOptions = null) {
 /**
  * Antigravity Usage - Fetch quota from Google Cloud Code API
  */
-export async function getAntigravityUsage(accessToken, providerSpecificData, proxyOptions = null) {
+export async function getAntigravityUsage(accessToken, providerSpecificData, proxyOptions = null, options = null) {
   try {
     // Fetch subscription info once — reuse for both projectId and plan
     const subscriptionInfo = await getAntigravitySubscriptionInfo(accessToken, proxyOptions);
@@ -235,7 +235,8 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
       const weeklyQuotas = await fetchAntigravityWeeklyQuota(
         accessToken,
         projectId,
-        proxyOptions
+        proxyOptions,
+        options
       );
 
       // Reconcile short-window session quota if models are exhausted:

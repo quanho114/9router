@@ -75,7 +75,7 @@ export function sortVisibleConnections(
     const resetTimes = (quotaData[connection.id]?.quotas || [])
       .map((quota) =>
         quota.resetAt
-          ? new Date(quota.resetAt).getTime()
+          ? Math.floor(new Date(quota.resetAt).getTime() / 60000)
           : Number.POSITIVE_INFINITY,
       )
       .filter((time) => Number.isFinite(time));
@@ -89,7 +89,8 @@ export function sortVisibleConnections(
     if (expiryDiff !== 0) return expiryDiff;
     return (
       (a.provider || "").localeCompare(b.provider || "") ||
-      (getConnectionLabel(a) || "").localeCompare(getConnectionLabel(b) || "")
+      (getConnectionLabel(a) || "").localeCompare(getConnectionLabel(b) || "") ||
+      String(a.id || "").localeCompare(String(b.id || ""))
     );
   });
 }

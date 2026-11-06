@@ -39,8 +39,9 @@ const systemItems = [
   { href: "/dashboard/skills", label: "Skills", icon: "extension" },
 ];
 
-export default function Sidebar({ onClose }) {
-  const pathname = usePathname();
+export default function Sidebar({ onClose, onNavigate, activePathname }) {
+  const routerPathname = usePathname();
+  const pathname = activePathname || routerPathname;
   const [mediaOpen, setMediaOpen] = useState(false);
   const [isDisconnected, setIsDisconnected] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
@@ -76,6 +77,11 @@ export default function Sidebar({ onClose }) {
     return pathname.startsWith(href);
   };
 
+  const handleLinkClick = (e, href) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    onNavigate?.(href);
+    onClose?.();
+  };
   // Open manual update panel (no countdown yet — user must click Copy to trigger shutdown)
   const handleUpdate = () => {
     setShowUpdateModal(false);
@@ -124,9 +130,9 @@ export default function Sidebar({ onClose }) {
 
         {/* Brand Identity */}
         <div className="px-6 py-4 flex flex-col gap-2.5">
-          <Link href="/dashboard" className="flex items-center gap-3.5 group">
-            <div className="flex items-center justify-center size-10 rounded-[12px] bg-brand-500 group-hover:scale-[1.03] transition-transform duration-200">
-              <span className="material-symbols-outlined text-white text-[21px] drop-shadow-xs">hub</span>
+          <Link href="/dashboard" prefetch={true} onClick={(e) => handleLinkClick(e, "/dashboard")} className="flex items-center gap-3.5 group">
+            <div className="flex items-center justify-center size-10 rounded-[12px] bg-white group-hover:scale-[1.03] transition-transform duration-200">
+              <img src="/logo.svg" alt="" className="size-9" />
             </div>
             <div className="flex flex-col">
               <h1 className="text-[17px] font-semibold tracking-tight text-text-main leading-tight">
@@ -171,7 +177,8 @@ export default function Sidebar({ onClose }) {
               <Link
                 key={item.href}
                 href={item.href}
-                onClick={onClose}
+                prefetch={true}
+                onClick={(e) => handleLinkClick(e, item.href)}
                 className={navItemClass(active)}
               >
                 <span
@@ -218,7 +225,8 @@ export default function Sidebar({ onClose }) {
                     <Link
                       key={kind.id}
                       href={`/dashboard/media-providers/${kind.id}`}
-                      onClick={onClose}
+                      prefetch={true}
+                      onClick={(e) => handleLinkClick(e, `/dashboard/media-providers/${kind.id}`)}
                       className={cn(
                         "flex items-center gap-3 px-3.5 py-1.5 rounded-[11px] transition-all duration-150 group",
                         subActive
@@ -234,7 +242,8 @@ export default function Sidebar({ onClose }) {
                 <Link
                   key={COMBINED_WEB_ITEM.id}
                   href={COMBINED_WEB_ITEM.href}
-                  onClick={onClose}
+                  prefetch={true}
+                  onClick={(e) => handleLinkClick(e, COMBINED_WEB_ITEM.href)}
                   className={cn(
                     "flex items-center gap-3 px-3.5 py-1.5 rounded-[11px] transition-all duration-150 group",
                     pathname.startsWith(COMBINED_WEB_ITEM.href)
@@ -254,7 +263,8 @@ export default function Sidebar({ onClose }) {
                 <Link
                   key={item.href}
                   href={item.href}
-                  onClick={onClose}
+                  prefetch={true}
+                  onClick={(e) => handleLinkClick(e, item.href)}
                   className={navItemClass(active)}
                 >
                   <span
@@ -278,7 +288,8 @@ export default function Sidebar({ onClose }) {
                 <Link
                   key={item.href}
                   href={item.href}
-                  onClick={onClose}
+                  prefetch={true}
+                  onClick={(e) => handleLinkClick(e, item.href)}
                   className={navItemClass(active)}
                 >
                   <span
@@ -294,41 +305,11 @@ export default function Sidebar({ onClose }) {
               ) : null;
             })}
 
-            {/* Remote */}
-            <a
-              href="https://9remote.cc"
-              target="_blank"
-              rel="noreferrer"
-              onClick={onClose}
-              className={cn("w-full", navItemClass(false))}
-            >
-              <span className="material-symbols-outlined text-[19px] group-hover:text-primary transition-colors">
-                computer
-              </span>
-              <span className="text-[13.5px] tracking-[-0.01em]">9Remote</span>
-              <span className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full bg-brand-500/15 text-brand-600 dark:text-brand-300 ring-1 ring-brand-500/25">
-                HOT
-              </span>
-            </a>
-
-            {/* 9English */}
-            <a
-              href="https://9english.net/"
-              target="_blank"
-              rel="noreferrer"
-              onClick={onClose}
-              className={cn("w-full", navItemClass(false))}
-            >
-              <span className="material-symbols-outlined text-[19px] group-hover:text-primary transition-colors">
-                translate
-              </span>
-              <span className="text-[13.5px] tracking-[-0.01em]">9English</span>
-            </a>
-
             {/* Settings */}
             <Link
               href="/dashboard/profile"
-              onClick={onClose}
+              prefetch={true}
+              onClick={(e) => handleLinkClick(e, "/dashboard/profile")}
               className={navItemClass(isActive("/dashboard/profile"))}
             >
               <span
@@ -350,7 +331,7 @@ export default function Sidebar({ onClose }) {
         isOpen={showUpdateModal}
         onClose={() => setShowUpdateModal(false)}
         onConfirm={handleUpdate}
-        title="Update 9Router"
+        title="Update Dolphin Router"
         message={`Show install command for v${updateInfo?.latestVersion || ""}? You can copy it and shutdown to install manually.`}
         confirmText="Show Command"
         cancelText="Cancel"
@@ -390,6 +371,8 @@ export default function Sidebar({ onClose }) {
 
 Sidebar.propTypes = {
   onClose: PropTypes.func,
+  onNavigate: PropTypes.func,
+  activePathname: PropTypes.string,
 };
 
 function ManualUpdatePanel({ latestVersion, installCmd, copied, onCopyAndShutdown, onCancel, countdown, isDisconnected }) {
@@ -401,7 +384,7 @@ function ManualUpdatePanel({ latestVersion, installCmd, copied, onCopyAndShutdow
           <span className="material-symbols-outlined text-[24px]">content_copy</span>
         </div>
         <div>
-          <h2 className="text-lg font-semibold">Update 9Router{latestVersion ? ` to v${latestVersion}` : ""}</h2>
+          <h2 className="text-lg font-semibold">Update Dolphin Router{latestVersion ? ` to v${latestVersion}` : ""}</h2>
           <p className="text-xs text-white/60">
             {isDisconnected
               ? "Server stopped. Paste the command into a terminal to install."

@@ -44,11 +44,42 @@ vi.mock("@/shared/constants/config", () => ({
       },
       antigravity: {
         settingsKey: "antigravityAutoPing",
-        quotaKey: "gemini_weekly",
-        quotaFallbackKeys: ["gemini_session", "argon_weekly", "argon_session", "gemini-3.8-flash-low", "gemini-3.7-flash-low"],
+        quotaKey: "gemini-3.8-flash-low",
+        quotaFallbackKeys: [
+          "gemini-3.7-flash-low",
+          "gemini_session",
+          "argon_session",
+          "gemini-4-argon-low",
+          "gemini_weekly",
+          "argon_weekly",
+        ],
+        pingWhenResetAtSlides: true,
+        pingWhenResetPasses: true,
+        resetAtDriftMs: 30000,
+        minPingIntervalMs: 600000,
         pingModel: "gemini-3.8-flash-low",
         pingText: "hi",
         pingMaxTokens: 1,
+        familyTargets: [
+          {
+            id: "gemini",
+            pingModel: "gemini-3.8-flash-low",
+            quotaKeys: ["gemini-3.8-flash-low", "gemini-3.7-flash-low", "gemini_session", "gemini_weekly"],
+            blockingQuotaKeys: ["gemini_weekly"],
+          },
+          {
+            id: "argon",
+            pingModel: "gemini-4-argon-low",
+            quotaKeys: ["argon_session", "gemini-4-argon-low", "argon_weekly"],
+            blockingQuotaKeys: ["argon_weekly"],
+          },
+          {
+            id: "claude_gpt",
+            pingModel: "claude-sonnet-4-6",
+            quotaKeys: ["claude_gpt_session", "claude-sonnet-4-6", "claude_gpt_weekly"],
+            blockingQuotaKeys: ["claude_gpt_weekly"],
+          },
+        ],
       },
       "gemini-cli": {
         settingsKey: "geminiCliAutoPing",
@@ -421,6 +452,63 @@ describe("quota auto-ping", () => {
     }));
     expect(deps.updateProviderConnection).toHaveBeenCalledWith("ag-1", expect.objectContaining({
       lastPingedResetAt: "2026-01-01T11:59:00.000Z",
+    }));
+  });
+
+  it("prioritizes Antigravity 5h session quota over 7d weekly quota and fires when cachedReset passes even if upstream rolls resetAt forward", async () => {
+    deps.getSettings.mockResolvedValue({ antigravityAutoPing: { connections: { "ag-1": true } } });
+    deps.getProviderConnections.mockImplementation(async ({ provider }) => (
+      provider === "antigravity"
+        ? [{ id: "ag-1", provider: "antigravity", authType: "oauth", accessToken: "ag-token", email: "user@example.com" }]
+        : []
+    ));
+    // Previous tick recorded 5h session reset at 11:59:30Z; by 12:00:00Z upstream rolled 5h resetAt forward to 17:00:00Z
+    state.resetCache["antigravity:ag-1"] = "2026-01-01T11:59:30.000Z";
+    getAntigravityUsage.mockResolvedValue({
+      subscriptionInfo: { cloudaicompanionProject: "proj-123" },
+      quotas: {
+        "gemini-3.8-flash-low": { used: 0, total: 1000, remaining: 1000, resetAt: "2026-01-01T17:00:00.000Z" },
+        gemini_weekly: { used: 100, total: 1000, remaining: 900, resetAt: "2026-01-07T12:00:00.000Z" },
+      },
+    });
+
+    await runQuotaAutoPingTick(deps, state);
+
+    const executor = deps.getExecutor.mock.results[0].value;
+    expect(executor.execute).toHaveBeenCalledTimes(1);
+    expect(deps.updateProviderConnection).toHaveBeenCalledWith("ag-1", expect.objectContaining({
+      lastPingedResetAt: "2026-01-01T17:00:00.000Z",
+      lastPingedResetKey: "2026-01-01T17:00:00.000Z",
+    }));
+  });
+
+  it("pings unstarted Antigravity Argon and Gemini families when their 7d/5h resetAt slides forward", async () => {
+    deps.getSettings.mockResolvedValue({ antigravityAutoPing: { connections: { "ag-1": true } } });
+    deps.getProviderConnections.mockImplementation(async ({ provider }) => (
+      provider === "antigravity"
+        ? [{ id: "ag-1", provider: "antigravity", authType: "oauth", accessToken: "ag-token", email: "user@example.com" }]
+        : []
+    ));
+    // Tick 1 recorded 7d Argon reset and 5h Gemini reset; Tick 2 sees both slid forward by +60s (unstarted full mana)
+    state.resetCache["antigravity:ag-1"] = "2026-01-01T17:00:00.000Z";
+    state.resetCache["antigravity:ag-1:argon"] = "2026-01-08T12:00:00.000Z";
+    getAntigravityUsage.mockResolvedValue({
+      subscriptionInfo: { cloudaicompanionProject: "proj-123" },
+      quotas: {
+        argon_weekly: { used: 0, total: 1000, remaining: 1000, resetAt: "2026-01-08T12:01:00.000Z" },
+        gemini_session: { used: 0, total: 1000, remaining: 1000, resetAt: "2026-01-01T17:01:00.000Z" },
+        gemini_weekly: { used: 0, total: 1000, remaining: 1000, resetAt: "2026-01-08T12:01:00.000Z" },
+      },
+    });
+
+    await runQuotaAutoPingTick(deps, state);
+
+    const executor = deps.getExecutor.mock.results[0].value;
+    expect(executor.execute).toHaveBeenCalledWith(expect.objectContaining({
+      model: "gemini-4-argon-low",
+    }));
+    expect(executor.execute).toHaveBeenCalledWith(expect.objectContaining({
+      model: "gemini-3.8-flash-low",
     }));
   });
 

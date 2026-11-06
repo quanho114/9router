@@ -12,14 +12,16 @@ function isLLMProvider(id) {
 }
 import Badge from "./Badge";
 import Card from "./Card";
+import { CardSkeleton, Skeleton } from "./Loading";
 import OverviewCards from "@/app/(dashboard)/dashboard/usage/components/OverviewCards";
 import UsageTable, { fmt, fmtTime } from "@/app/(dashboard)/dashboard/usage/components/UsageTable";
-import dynamic from "next/dynamic";
-// Lazy-load: keeps @xyflow/react and recharts out of the initial bundle
-const ProviderTopology = dynamic(() => import("@/app/(dashboard)/dashboard/usage/components/ProviderTopology"), { ssr: false });
-const UsageChart = dynamic(() => import("@/app/(dashboard)/dashboard/usage/components/UsageChart"), { ssr: false });
-const ProviderBarChart = dynamic(() => import("@/app/(dashboard)/dashboard/usage/components/ProviderBarChart"), { ssr: false });
-const TopModelsChart = dynamic(() => import("@/app/(dashboard)/dashboard/usage/components/TopModelsChart"), { ssr: false });
+import ProviderTopology from "@/app/(dashboard)/dashboard/usage/components/ProviderTopology";
+import UsageChart from "@/app/(dashboard)/dashboard/usage/components/UsageChart";
+import ProviderBarChart from "@/app/(dashboard)/dashboard/usage/components/ProviderBarChart";
+import TopModelsChart from "@/app/(dashboard)/dashboard/usage/components/TopModelsChart";
+
+const statsCacheByPeriod = new Map();
+let cachedProvidersList = null;
 
 function timeAgo(timestamp) {
   const diff = Math.floor((Date.now() - new Date(timestamp)) / 1000);
@@ -215,9 +217,9 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const [fetching, setFetching] = useState(false);
   const [tableView, setTableView] = useState("model");
   const [viewMode, setViewMode] = useState("costs");
-  const [providers, setProviders] = useState([]);
+  const [providers, setProviders] = useState(() => cachedProvidersList || []);
+  const [providersLoaded, setProvidersLoaded] = useState(() => cachedProvidersList !== null);
   const [periodLocal, setPeriodLocal] = useState("today");
-  const isInitialLoad = useRef(true);
   const hasLoadedStats = useRef(false);
   const period = periodProp ?? periodLocal;
   const setPeriod = setPeriodProp ?? setPeriodLocal;
@@ -225,11 +227,13 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   // Fetch connected providers once, deduplicate by provider type
   // Always include noAuth free providers (e.g. opencode) regardless of connections
   useEffect(() => {
+    let cancelled = false;
     Promise.all([
       fetch("/api/providers").then((r) => r.ok ? r.json() : null),
       fetch("/api/provider-nodes").then((r) => r.ok ? r.json() : null),
     ])
       .then(([d, nodesData]) => {
+        if (cancelled) return;
         // Build node name lookup for custom providers
         const nodeNameMap = {};
         for (const node of (nodesData?.nodes || [])) {
@@ -250,16 +254,36 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         const noAuthProviders = Object.values(FREE_PROVIDERS)
           .filter((p) => p.noAuth && !p.hidden && !seen.has(p.id) && isLLMProvider(p.id))
           .map((p) => ({ provider: p.id, name: p.name }));
-        setProviders([...unique, ...noAuthProviders]);
+        const nextProviders = [...unique, ...noAuthProviders];
+        cachedProvidersList = nextProviders;
+        setProviders(nextProviders);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setProvidersLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Fetch filtered stats via REST when period changes
   useEffect(() => {
-    // First load: show full spinner; subsequent: show subtle fetching indicator
-    if (isInitialLoad.current) {
-      isInitialLoad.current = false;
+    let cancelled = false;
+    const cachedForPeriod = statsCacheByPeriod.get(period);
+
+    if (cachedForPeriod) {
+      hasLoadedStats.current = true;
+      setStats((prev) => ({
+        ...cachedForPeriod,
+        ...(prev?.activeRequests ? { activeRequests: prev.activeRequests } : {}),
+        ...(prev?.recentRequests ? { recentRequests: prev.recentRequests } : {}),
+        ...(prev?.errorProvider !== undefined ? { errorProvider: prev.errorProvider } : {}),
+        ...(prev?.pending ? { pending: prev.pending } : {}),
+      }));
+      setLoading(false);
+      setFetching(true);
+    } else if (!hasLoadedStats.current) {
       setLoading(true);
     } else {
       setFetching(true);
@@ -268,16 +292,21 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
     fetch(`/api/usage/stats?period=${period}`)
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
-        if (data) {
-          hasLoadedStats.current = true;
-          setStats((prev) => ({ ...prev, ...data }));
-        }
+        if (cancelled || !data) return;
+        hasLoadedStats.current = true;
+        statsCacheByPeriod.set(period, data);
+        setStats((prev) => ({ ...prev, ...data }));
       })
       .catch(() => {})
       .finally(() => {
+        if (cancelled) return;
         setLoading(false);
         setFetching(false);
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [period]);
 
   // SSE connection - real-time updates for activeRequests + recentRequests only
@@ -298,13 +327,10 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
             pending: data.pending,
           };
         });
-        if (hasLoadedStats.current) setLoading(false);
       } catch (err) {
         console.error("[SSE CLIENT] parse error:", err);
       }
     };
-
-    es.onerror = () => setLoading(false);
 
     return () => es.close();
   }, []);
@@ -439,12 +465,20 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
 
   if (!stats && !loading) return <div className="text-text-muted">Failed to load usage statistics.</div>;
 
-  const spinner = (
-    <div className="flex items-center justify-center py-12 text-text-muted">
-      <span className="material-symbols-outlined text-[32px] animate-spin">progress_activity</span>
+  const overviewSkeleton = (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <CardSkeleton />
+      <CardSkeleton />
+      <CardSkeleton />
+      <CardSkeleton />
     </div>
   );
-
+  const blockSkeleton = (
+    <Card className="p-6">
+      <Skeleton className="h-4 w-40 mb-4" />
+      <Skeleton className="h-56 w-full rounded-xl" />
+    </Card>
+  );
   return (
     <div className="flex min-w-0 flex-col gap-6">
       {/* Period selector (hidden when controlled by parent) */}
@@ -469,13 +503,14 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       )}
 
       {/* Overview cards */}
-      {loading ? spinner : <OverviewCards stats={stats} />}
+      {loading || !stats ? overviewSkeleton : <OverviewCards stats={stats} />}
 
       {/* Provider topology + Recent Requests */}
-      {loading ? spinner : (
+      {loading || !stats ? blockSkeleton : (
         <div className="grid min-w-0 grid-cols-1 items-stretch gap-2 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
           <ProviderTopology
             providers={providers}
+            providersLoading={!providersLoaded}
             activeRequests={stats.activeRequests || []}
             lastProvider={stats.recentRequests?.[0]?.provider || ""}
             errorProvider={stats.errorProvider || ""}
@@ -485,10 +520,8 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       )}
 
       {/* Token / Cost chart - sync period */}
-      {loading ? spinner : <UsageChart period={period} />}
-
-      {/* Provider and model breakdown charts */}
-      {!loading && (stats.byProvider || stats.byModel) && (
+      {loading || !stats ? blockSkeleton : <UsageChart period={period} />}
+      {!loading && stats && (stats.byProvider || stats.byModel) && (
         <div className="grid min-w-0 grid-cols-1 gap-2 lg:grid-cols-2">
           <ProviderBarChart byProvider={stats.byProvider} />
           <TopModelsChart byModel={stats.byModel} />
@@ -523,7 +556,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
             </button>
           </div>
         </div>
-        {loading ? spinner : activeTableConfig && (
+        {loading ? blockSkeleton : activeTableConfig && (
           <UsageTable
             title=""
             columns={activeTableConfig.columns}

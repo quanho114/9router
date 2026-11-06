@@ -109,7 +109,7 @@ const getPageInfo = (pathname) => {
   if (pathname.includes("/mitm"))
     return {
       title: "MITM Proxy",
-      description: "Intercept CLI tool traffic and route through 9Router",
+      description: "Intercept CLI tool traffic and route through Dolphin Router",
       icon: "security",
       breadcrumbs: [],
     };
@@ -137,7 +137,7 @@ const getPageInfo = (pathname) => {
   if (pathname.includes("/skills"))
     return {
       title: "Agent Skills",
-      description: "Copy a link and paste to your AI to use 9Router — no install needed",
+      description: "Copy a link and paste to your AI to use Dolphin Router — no install needed",
       icon: "extension",
       breadcrumbs: [],
     };
@@ -179,8 +179,9 @@ const getPageInfo = (pathname) => {
   return { title: "", description: "", breadcrumbs: [] };
 };
 
-export default function Header({ onMenuClick, showMenuButton = true }) {
-  const pathname = usePathname();
+export default function Header({ onMenuClick, showMenuButton = true, activePathname }) {
+  const routerPathname = usePathname();
+  const pathname = activePathname || routerPathname;
   const [displayName, setDisplayName] = useState("");
   const [loginMethod, setLoginMethod] = useState("");
   const [donateOpen, setDonateOpen] = useState(false);
@@ -376,4 +377,5 @@ function HeaderSearch() {
 Header.propTypes = {
   onMenuClick: PropTypes.func,
   showMenuButton: PropTypes.bool,
+  activePathname: PropTypes.string,
 };

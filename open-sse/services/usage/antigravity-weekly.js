@@ -13,8 +13,15 @@ const WEEKLY_CONFIG = {
 };
 
 // — Cache: TTL + in-flight dedup per project ———————————————
-const WEEKLY_CACHE_TTL_MS = 180_000; // 3 minutes
-const weeklyCache = new Map(); // cacheKey -> { result, expiresAt } | { promise }
+const WEEKLY_CACHE_TTL_MS = 60_000; // 60 seconds
+const weeklyCache = new Map(); // cacheKey -> { result, expiresAt } | { promise, result, expiresAt }
+
+function cloneWeeklyResult(result) {
+  if (!result || typeof result !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(result).map(([k, v]) => [k, v && typeof v === "object" ? { ...v } : v])
+  );
+}
 
 function cacheKey(accessToken, projectId) {
   return `${accessToken}::${projectId || ""}`;
@@ -118,13 +125,16 @@ export function parseWeeklyQuotaSummary(data) {
 /**
  * Fetch weekly quota summary — cached, deduped, never throws.
  */
-export async function fetchAntigravityWeeklyQuota(accessToken, projectId, proxyOptions = null) {
+export async function fetchAntigravityWeeklyQuota(accessToken, projectId, proxyOptions = null, options = null) {
   const key = cacheKey(accessToken, projectId);
 
-  // Serve in-flight or cached
+  // Serve in-flight or cached unless caller requested a fresh check
   const hit = weeklyCache.get(key);
-  if (hit?.promise) return hit.promise;
-  if (hit && hit.expiresAt > Date.now()) return hit.result;
+  if (hit?.promise) return hit.promise.then(cloneWeeklyResult);
+  if (!options?.bypassCache && hit?.result && hit.expiresAt > Date.now()) {
+    return cloneWeeklyResult(hit.result);
+  }
+  const previousResult = hit?.result || null;
 
   const promise = (async () => {
     try {
@@ -154,17 +164,25 @@ export async function fetchAntigravityWeeklyQuota(accessToken, projectId, proxyO
     }
   })();
 
-  weeklyCache.set(key, { promise });
+  weeklyCache.set(key, { promise, result: previousResult, expiresAt: hit?.expiresAt || 0 });
 
   try {
     const result = await promise;
     if (result && Object.keys(result).length > 0) {
       weeklyCache.set(key, { result, expiresAt: Date.now() + WEEKLY_CACHE_TTL_MS });
-    } else {
-      weeklyCache.delete(key);
+      return cloneWeeklyResult(result);
     }
-    return result;
+    if (previousResult && Object.keys(previousResult).length > 0) {
+      weeklyCache.set(key, { result: previousResult, expiresAt: Date.now() + 10_000 });
+      return cloneWeeklyResult(previousResult);
+    }
+    weeklyCache.delete(key);
+    return {};
   } catch {
+    if (previousResult && Object.keys(previousResult).length > 0) {
+      weeklyCache.set(key, { result: previousResult, expiresAt: Date.now() + 10_000 });
+      return cloneWeeklyResult(previousResult);
+    }
     weeklyCache.delete(key);
     return {};
   }

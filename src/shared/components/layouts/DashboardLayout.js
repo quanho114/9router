@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { usePathname } from "next/navigation";
 import { useNotificationStore } from "@/store/notificationStore";
 import Sidebar from "../Sidebar";
 import Header from "../Header";
-
+import { DashboardPageSkeleton } from "../Loading";
 function getToastStyle(type) {
   if (type === "success") {
     return {
@@ -42,8 +42,43 @@ function getToastStyle(type) {
 export default function DashboardLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
+  const [pendingNav, setPendingNav] = useState(null);
   const notifications = useNotificationStore((state) => state.notifications);
   const removeNotification = useNotificationStore((state) => state.removeNotification);
+
+  // Active optimistic navigation only while `pathname` is still at the route where click happened
+  const isNavigating = Boolean(
+    pendingNav && pendingNav.from === pathname && pendingNav.target !== pathname
+  );
+  const effectivePathname = isNavigating ? pendingNav.target : pathname;
+
+  // Clear pending state as soon as Next.js commits the route transition
+  useEffect(() => {
+    setPendingNav(null);
+  }, [pathname]);
+
+  // Safety fallback in case navigation is cancelled or intercepted
+  useEffect(() => {
+    if (!isNavigating) return;
+    const timer = setTimeout(() => setPendingNav(null), 5000);
+    return () => clearTimeout(timer);
+  }, [isNavigating, pendingNav]);
+
+  const handleNavigate = useCallback(
+    (targetHref) => {
+      setSidebarOpen(false);
+      if (!targetHref) return;
+      const isSameEndpointAlias =
+        (pathname === "/dashboard" || pathname === "/dashboard/endpoint") &&
+        (targetHref === "/dashboard" || targetHref === "/dashboard/endpoint");
+      if (targetHref === pathname || isSameEndpointAlias) {
+        setPendingNav(null);
+        return;
+      }
+      setPendingNav({ from: pathname, target: targetHref });
+    },
+    [pathname]
+  );
 
   // Preload heavy usage charts in background when browser is idle
   useEffect(() => {
@@ -107,7 +142,7 @@ export default function DashboardLayout({ children }) {
 
       {/* Sidebar - Desktop */}
       <div className="hidden lg:flex p-3 pr-0 h-full">
-        <Sidebar />
+        <Sidebar activePathname={effectivePathname} onNavigate={handleNavigate} />
       </div>
 
       {/* Sidebar - Mobile */}
@@ -116,16 +151,25 @@ export default function DashboardLayout({ children }) {
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <Sidebar onClose={() => setSidebarOpen(false)} />
+        <Sidebar
+          activePathname={effectivePathname}
+          onNavigate={handleNavigate}
+          onClose={() => setSidebarOpen(false)}
+        />
       </div>
 
       {/* Main content */}
       <main className="flex flex-col flex-1 h-full min-w-0 relative transition-colors duration-300 isolate">
         {/* Subtle Apple spatial grid + mesh */}
         <div className="landing-grid absolute inset-0 pointer-events-none -z-10" aria-hidden="true" />
-        <Header key={pathname} onMenuClick={() => setSidebarOpen(true)} />
-        <div className={`flex-1 overflow-y-auto custom-scrollbar ${pathname === "/dashboard/basic-chat" ? "" : "p-5 lg:p-9"} ${pathname === "/dashboard/basic-chat" ? "flex flex-col overflow-hidden" : ""}`}>
-          <div className={`${pathname === "/dashboard/basic-chat" ? "flex-1 w-full h-full flex flex-col" : "max-w-7xl mx-auto"}`}>{children}</div>
+        <Header activePathname={effectivePathname} onMenuClick={() => setSidebarOpen(true)} />
+        <div className={`flex-1 overflow-y-auto custom-scrollbar ${effectivePathname === "/dashboard/basic-chat" ? "" : "p-5 lg:p-9"} ${effectivePathname === "/dashboard/basic-chat" ? "flex flex-col overflow-hidden" : ""}`}>
+          <div className={`${effectivePathname === "/dashboard/basic-chat" ? "flex-1 w-full h-full flex flex-col" : "max-w-7xl mx-auto"}`}>
+            {isNavigating && <DashboardPageSkeleton pathname={effectivePathname} />}
+            <div className={isNavigating ? "hidden" : "contents"}>
+              {children}
+            </div>
+          </div>
         </div>
       </main>
     </div>

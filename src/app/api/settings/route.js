@@ -17,6 +17,20 @@ const PROTECTED_SETTING_KEYS = ["password", "mitmSudoEncrypted"];
 export async function GET() {
   try {
     const settings = await getSettings();
+    if (
+      settings?.claudeAutoPing ||
+      settings?.codexAutoPing ||
+      settings?.antigravityAutoPing ||
+      settings?.geminiCliAutoPing
+    ) {
+      import("@/shared/services/quotaAutoPing")
+        .then(({ hasAnyAutoPingEnabled, startQuotaAutoPing }) => {
+          if (hasAnyAutoPingEnabled(settings) && !global.__quotaAutoPing?.interval) {
+            startQuotaAutoPing();
+          }
+        })
+        .catch(() => {});
+    }
     const { password, oidcClientSecret, ...safeSettings } = settings;
     safeSettings.oidcConfigured = !!(safeSettings.oidcIssuerUrl && safeSettings.oidcClientId && oidcClientSecret);
     

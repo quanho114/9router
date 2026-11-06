@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Card, Button, Input, Modal, Toggle, ConfirmModal } from "@/shared/components";
+import { Card, CardSkeleton, Button, Input, Modal, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { getCurrentLocale, onLocaleChange } from "@/i18n/runtime";
 import {
@@ -11,6 +11,7 @@ import {
 } from "../endpoint/endpointConstants";
 
 export default function TokenSaverClient() {
+  const [settingsLoading, setSettingsLoading] = useState(true);
   const [rtkEnabled, setRtkEnabledState] = useState(true);
   const [headroomEnabled, setHeadroomEnabled] = useState(false);
   const [headroomUrl, setHeadroomUrl] = useState("http://localhost:8787");
@@ -450,6 +451,9 @@ export default function TokenSaverClient() {
           refreshPxpipeStatus().then(runPxpipeHealth);
         }
       } catch {}
+      finally {
+        setSettingsLoading(false);
+      }
     };
     loadSettings();
   }, [refreshHeadroomStatus, refreshPxpipeStatus, runPxpipeHealth]);
@@ -485,6 +489,15 @@ export default function TokenSaverClient() {
     pxpipeHealthy || pxpipeStatus.running
       ? "bg-success/15 text-success"
       : "bg-warning/15 text-warning";
+
+  if (settingsLoading) {
+    return (
+      <div className="space-y-6 p-6">
+        <CardSkeleton />
+        <CardSkeleton />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 p-6">

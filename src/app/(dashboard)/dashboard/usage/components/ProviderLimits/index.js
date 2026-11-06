@@ -40,7 +40,7 @@ import {
   QUOTA_SORT_OPTIONS,
 } from "./utils";
 import Card from "@/shared/components/Card";
-import { ConfirmModal, EditConnectionModal } from "@/shared/components";
+import { ConfirmModal, EditConnectionModal, QuotaCardSkeleton, Skeleton } from "@/shared/components";
 import AutoPingScheduleModal from "@/app/(dashboard)/dashboard/providers/[id]/AutoPingScheduleModal";
 import { getScheduleSlotLabels } from "@/shared/services/quotaPingSchedule";
 import { USAGE_SUPPORTED_PROVIDERS, AI_PROVIDERS } from "@/shared/constants/providers";
@@ -173,7 +173,6 @@ export default function ProviderLimits() {
   const [hasHydratedAutoRefresh, setHasHydratedAutoRefresh] = useState(false);
   const [connectionsLoading, setConnectionsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState(null);
-  const [togglingId, setTogglingId] = useState(null);
   const [resettingLimitId, setResettingLimitId] = useState(null);
   const [resetConfirmState, setResetConfirmState] = useState(null);
   const [resetCreditsState, setResetCreditsState] = useState(null);
@@ -226,11 +225,32 @@ export default function ProviderLimits() {
   const intervalRef = useRef(null);
   const refreshInFlightRef = useRef(false);
   const quotaInFlightRef = useRef(new Set());
+  const abortControllerRef = useRef(null);
+  const connectionsReqIdRef = useRef(0);
   const connectionsRef = useRef(connections);
   connectionsRef.current = connections;
+  const quotaDataRef = useRef(quotaData);
+  quotaDataRef.current = quotaData;
+
+  useEffect(() => {
+    const cached = getQuotaCache();
+    if (cached && Object.keys(cached).length > 0) {
+      quotaDataRef.current = cached;
+      setQuotaData((prev) => ({ ...cached, ...prev }));
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    return () => {
+      controller.abort();
+    };
+  }, []);
 
   const fetchConnections = useCallback(
     async (targetPage = page) => {
+      const reqId = ++connectionsReqIdRef.current;
       try {
         const params = new URLSearchParams({
           page: String(targetPage),
@@ -244,11 +264,15 @@ export default function ProviderLimits() {
         }
 
         const response = await fetch(
-          `/api/providers/client?${params.toString()}`, { cache: "no-store" },
+          `/api/providers/client?${params.toString()}`,
+          { cache: "no-store", signal: abortControllerRef.current?.signal },
         );
         if (!response.ok) throw new Error("Failed to fetch connections");
 
         const data = await response.json();
+        if (reqId !== connectionsReqIdRef.current) {
+          return connectionsRef.current;
+        }
         const connectionList = data.connections || [];
         const nextPagination = getSafePagination(data.pagination, pageSize);
         const nextTotals = getSafeTotals(data.totals, connectionList.length);
@@ -260,6 +284,7 @@ export default function ProviderLimits() {
         setPage(getPaginationPageValue(data.pagination, targetPage));
         return connectionList;
       } catch (error) {
+        if (error?.name === "AbortError") return connectionsRef.current;
         console.error("Error fetching connections:", error);
         return connectionsRef.current;
       }
@@ -268,18 +293,24 @@ export default function ProviderLimits() {
   );
 
   // Fetch quota for a specific connection
-  const fetchQuota = useCallback(async (connectionId, provider, { force = false } = {}) => {
+  const fetchQuota = useCallback(async (connectionId, provider, { force = false, silent = false } = {}) => {
+    if (abortControllerRef.current?.signal?.aborted) return;
     if (quotaInFlightRef.current.has(connectionId)) return;
     quotaInFlightRef.current.add(connectionId);
-    setLoading((prev) => ({ ...prev, [connectionId]: true }));
-    setErrors((prev) => ({ ...prev, [connectionId]: null }));
+    const hasExistingQuota = Boolean(quotaDataRef.current[connectionId]);
+    if (!silent && (!hasExistingQuota || force)) {
+      setLoading((prev) => (prev[connectionId] ? prev : { ...prev, [connectionId]: true }));
+    }
+    if (!silent) {
+      setErrors((prev) => (prev[connectionId] == null ? prev : { ...prev, [connectionId]: null }));
+    }
 
     try {
-      console.log(
-        `[ProviderLimits] Fetching quota for ${provider} (${connectionId})`,
-      );
       const url = `/api/usage/${connectionId}${force ? "?force=1" : ""}`;
-      const response = await fetch(url, { cache: "no-store" });
+      const response = await fetch(url, {
+        cache: "no-store",
+        signal: abortControllerRef.current?.signal,
+      });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -320,20 +351,35 @@ export default function ProviderLimits() {
 
       // Parse quota data using provider-specific parser
       const parsedQuotas = parseQuotaData(provider, data);
+      const previousEntry = quotaDataRef.current[connectionId];
+      const keepPreviousQuotas =
+        parsedQuotas.length === 0 &&
+        data?.quotas == null &&
+        Boolean(data?.message) &&
+        Array.isArray(previousEntry?.quotas) &&
+        previousEntry.quotas.length > 0;
 
       const quotaEntry = {
-        quotas: parsedQuotas,
-        plan: data.plan || null,
+        quotas: keepPreviousQuotas ? previousEntry.quotas : parsedQuotas,
+        plan: data.plan || (keepPreviousQuotas ? previousEntry?.plan : null) || null,
         message: data.message || null,
         raw: data,
       };
 
+      quotaDataRef.current = {
+        ...quotaDataRef.current,
+        [connectionId]: quotaEntry,
+      };
       setQuotaData((prev) => ({
         ...prev,
         [connectionId]: quotaEntry,
       }));
-      setQuotaCache(connectionId, quotaEntry);
+      setErrors((prev) => (prev[connectionId] == null ? prev : { ...prev, [connectionId]: null }));
+      if (!keepPreviousQuotas) {
+        setQuotaCache(connectionId, quotaEntry);
+      }
     } catch (error) {
+      if (error?.name === "AbortError") return;
       console.error(
         `[ProviderLimits] Error fetching quota for ${provider} (${connectionId}):`,
         error,
@@ -344,10 +390,32 @@ export default function ProviderLimits() {
       }));
     } finally {
       quotaInFlightRef.current.delete(connectionId);
-      setLoading((prev) => ({ ...prev, [connectionId]: false }));
+      if (!abortControllerRef.current?.signal?.aborted) {
+        setLoading((prev) => (prev[connectionId] ? { ...prev, [connectionId]: false } : prev));
+      }
     }
   }, []);
 
+  // Limit concurrent /api/usage/* fetches so browser HTTP/1.1 connection pool (6 per origin)
+  // always keeps free slots for instant sidebar navigation and UI actions.
+  const fetchQuotasBounded = useCallback(
+    async (connectionList, concurrency = 3, options = {}) => {
+      if (!Array.isArray(connectionList) || connectionList.length === 0) return;
+      const queue = [...connectionList];
+      const workerCount = Math.min(concurrency, queue.length);
+      await Promise.all(
+        Array.from({ length: workerCount }, async () => {
+          while (queue.length > 0) {
+            if (abortControllerRef.current?.signal?.aborted) break;
+            const conn = queue.shift();
+            if (!conn) break;
+            await fetchQuota(conn.id, conn.provider, options);
+          }
+        }),
+      );
+    },
+    [fetchQuota],
+  );
   const handleResetCodexLimit = useCallback(
     async (connectionId, provider) => {
       if ((provider !== "codex" && provider !== "claude") || resettingLimitId) return;
@@ -456,7 +524,10 @@ export default function ProviderLimits() {
 
   const handleToggleConnectionActive = useCallback(
     async (id, isActive) => {
-      setTogglingId(id);
+      // Optimistically update switch state immediately so rapid clicks aren't blocked
+      setConnections((prev) =>
+        prev.map((conn) => (conn.id === id ? { ...conn, isActive } : conn)),
+      );
       try {
         const res = await fetch(`/api/providers/${id}`, {
           method: "PUT",
@@ -464,19 +535,22 @@ export default function ProviderLimits() {
           body: JSON.stringify({ isActive }),
         });
         if (res.ok) {
-          setQuotaData((prev) => {
-            const next = { ...prev };
-            return next;
-          });
-          await reconcileConnectionsPage(fetchConnections, page);
+          if (accountFilter !== "all") {
+            await reconcileConnectionsPage(fetchConnections, page);
+          }
+        } else {
+          setConnections((prev) =>
+            prev.map((conn) => (conn.id === id ? { ...conn, isActive: !isActive } : conn)),
+          );
         }
       } catch (error) {
         console.error("Error updating connection status:", error);
-      } finally {
-        setTogglingId(null);
+        setConnections((prev) =>
+          prev.map((conn) => (conn.id === id ? { ...conn, isActive: !isActive } : conn)),
+        );
       }
     },
-    [fetchConnections, page],
+    [accountFilter, fetchConnections, page],
   );
 
   const handleUpdateConnection = useCallback(
@@ -521,56 +595,66 @@ export default function ProviderLimits() {
   }, []);
 
   const refreshAll = useCallback(async () => {
-    if (refreshInFlightRef.current) return;
+    if (refreshInFlightRef.current || abortControllerRef.current?.signal?.aborted) return;
     refreshInFlightRef.current = true;
 
     try {
       const visibleConnections = await fetchConnections(page);
+      if (abortControllerRef.current?.signal?.aborted) return;
 
       setErrors((prev) =>
         filterQuotaStateByConnections(prev, visibleConnections),
       );
-      setQuotaData((prev) =>
-        filterQuotaStateByConnections(prev, visibleConnections),
-      );
 
-      await Promise.all(
-        visibleConnections
-          .map((conn) => fetchQuota(conn.id, conn.provider)),
-      );
+      await fetchQuotasBounded(visibleConnections, 3, { silent: true });
 
-      setLastUpdated(new Date());
+      if (!abortControllerRef.current?.signal?.aborted) {
+        setLastUpdated(new Date());
+      }
     } catch (error) {
-      console.error("Error refreshing all providers:", error);
+      if (error?.name !== "AbortError") {
+        console.error("Error refreshing all providers:", error);
+      }
     } finally {
       refreshInFlightRef.current = false;
     }
-  }, [fetchConnections, fetchQuota, page]);
+  }, [fetchConnections, fetchQuotasBounded, page]);
 
   useEffect(() => {
     const initializeData = async () => {
-      setConnectionsLoading(true);
-      const visibleConnections = await fetchConnections(page);
-      setConnectionsLoading(false);
+      refreshInFlightRef.current = true;
+      try {
+        if (connectionsRef.current.length === 0) {
+          setConnectionsLoading(true);
+        }
+        const visibleConnections = await fetchConnections(page);
+        if (abortControllerRef.current?.signal?.aborted) return;
+        setConnectionsLoading(false);
 
-      // Always fetch fresh quota on mount, no cache display
-      setLoading(buildLoadingState(visibleConnections));
-      setErrors((prev) =>
-        filterQuotaStateByConnections(prev, visibleConnections),
-      );
-      setQuotaData((prev) =>
-        filterQuotaStateByConnections(prev, visibleConnections),
-      );
+        const uncachedConnections = visibleConnections.filter(
+          (conn) => !quotaDataRef.current[conn.id],
+        );
+        if (uncachedConnections.length > 0) {
+          setLoading((prev) => ({
+            ...prev,
+            ...buildLoadingState(uncachedConnections),
+          }));
+        }
+        setErrors((prev) =>
+          filterQuotaStateByConnections(prev, visibleConnections),
+        );
 
-      await Promise.all(
-        visibleConnections.map((conn) => fetchQuota(conn.id, conn.provider)),
-      );
-      setLastUpdated(new Date());
+        await fetchQuotasBounded(visibleConnections, 3, { silent: true });
+        if (!abortControllerRef.current?.signal?.aborted) {
+          setLastUpdated(new Date());
+        }
+      } finally {
+        refreshInFlightRef.current = false;
+      }
     };
 
     initializeData();
-  }, [fetchConnections, fetchQuota, page]);
-
+  }, [fetchConnections, fetchQuotasBounded, page]);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const stored = window.localStorage.getItem(AUTO_REFRESH_STORAGE_KEY);
@@ -651,59 +735,63 @@ export default function ProviderLimits() {
     const key = getQuotaVisibilityKey(quota);
     if (!provider || !key) return;
 
-    const previous = quotaVisibility;
-    const providerVisibility = previous[provider] || {};
-    const hidden = new Set(providerVisibility.hidden || []);
-    hidden.add(key);
-    if (provider === "antigravity") {
-      if (key === "gemini") {
-        for (const k of hidden) {
-          if (k.startsWith("gemini-") && !k.includes("image")) hidden.delete(k);
-        }
-      } else if (key === "claude") {
-        for (const k of hidden) {
-          if (k.startsWith("claude-")) hidden.delete(k);
+    setQuotaVisibility((previous) => {
+      const providerVisibility = previous[provider] || {};
+      const hidden = new Set(providerVisibility.hidden || []);
+      hidden.add(key);
+      if (provider === "antigravity") {
+        if (key === "gemini") {
+          for (const k of hidden) {
+            if (k.startsWith("gemini-") && !k.includes("image")) hidden.delete(k);
+          }
+        } else if (key === "claude") {
+          for (const k of hidden) {
+            if (k.startsWith("claude-")) hidden.delete(k);
+          }
         }
       }
-    }
-    const next = {
-      ...previous,
-      [provider]: {
-        ...providerVisibility,
-        hidden: [...hidden],
-      },
-    };
-    updateQuotaVisibility(next, previous);
-  }, [quotaVisibility, updateQuotaVisibility]);
+      const next = {
+        ...previous,
+        [provider]: {
+          ...providerVisibility,
+          hidden: [...hidden],
+        },
+      };
+      void updateQuotaVisibility(next, previous);
+      return next;
+    });
+  }, [updateQuotaVisibility]);
 
   const handleShowQuota = useCallback((provider, quota) => {
     const key = getQuotaVisibilityKey(quota);
     if (!provider || !key) return;
 
-    const previous = quotaVisibility;
-    const providerVisibility = previous[provider] || {};
-    const hidden = new Set(providerVisibility.hidden || []);
-    hidden.delete(key);
-    if (provider === "antigravity") {
-      if (key === "gemini") {
-        for (const k of hidden) {
-          if (k.startsWith("gemini-") && !k.includes("image")) hidden.delete(k);
-        }
-      } else if (key === "claude") {
-        for (const k of hidden) {
-          if (k.startsWith("claude-")) hidden.delete(k);
+    setQuotaVisibility((previous) => {
+      const providerVisibility = previous[provider] || {};
+      const hidden = new Set(providerVisibility.hidden || []);
+      hidden.delete(key);
+      if (provider === "antigravity") {
+        if (key === "gemini") {
+          for (const k of hidden) {
+            if (k.startsWith("gemini-") && !k.includes("image")) hidden.delete(k);
+          }
+        } else if (key === "claude") {
+          for (const k of hidden) {
+            if (k.startsWith("claude-")) hidden.delete(k);
+          }
         }
       }
-    }
-    const next = {
-      ...previous,
-      [provider]: {
-        ...providerVisibility,
-        hidden: [...hidden],
-      },
-    };
-    updateQuotaVisibility(next, previous);
-  }, [quotaVisibility, updateQuotaVisibility]);
+      const next = {
+        ...previous,
+        [provider]: {
+          ...providerVisibility,
+          hidden: [...hidden],
+        },
+      };
+      void updateQuotaVisibility(next, previous);
+      return next;
+    });
+  }, [updateQuotaVisibility]);
 
   // Silent updates; never overlap cycles or poll a hidden tab.
   useEffect(() => {
@@ -1018,6 +1106,9 @@ export default function ProviderLimits() {
       )}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 items-start gap-3">
+        {connectionsLoading && sortedConnections.length === 0
+          ? Array.from({ length: 6 }).map((_, idx) => <QuotaCardSkeleton key={`skeleton-${idx}`} />)
+          : null}
         {sortedConnections.map((conn) => {
           const quota = quotaData[conn.id];
           const isLoading = loading[conn.id];
@@ -1030,7 +1121,7 @@ export default function ProviderLimits() {
           const resetLabel = isCodex ? "Codex reset credit" : "Claude limit reset";
           const resetCreditCount = getCodexResetCreditCount(quota);
           const isResettingLimit = resettingLimitId === conn.id;
-          const rowBusy = deletingId === conn.id || togglingId === conn.id || isResettingLimit;
+          const rowBusy = deletingId === conn.id || isResettingLimit;
           const rawQuotas = quota?.quotas || [];
           const visibleQuotas = filterQuotasByVisibility(conn.provider, rawQuotas, quotaVisibility);
           const hiddenQuotaRows = getHiddenQuotaRows(conn.provider, rawQuotas, quotaVisibility);
@@ -1246,10 +1337,17 @@ export default function ProviderLimits() {
 
               <div className="px-3 py-1">
                 {isLoading && !quota ? (
-                  <div className="text-center py-5 text-text-muted">
-                    <span className="material-symbols-outlined text-[28px] animate-spin">
-                      progress_activity
-                    </span>
+                  <div className="py-2.5 space-y-2.5">
+                    <div className="flex items-center gap-3">
+                      <Skeleton className="h-3.5 w-32 shrink-0" />
+                      <Skeleton className="h-2 flex-1 rounded-full" />
+                      <Skeleton className="h-3.5 w-16 shrink-0" />
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <Skeleton className="h-3.5 w-28 shrink-0" />
+                      <Skeleton className="h-2 flex-1 rounded-full" />
+                      <Skeleton className="h-3.5 w-16 shrink-0" />
+                    </div>
                   </div>
                 ) : error && !quota ? (
                   <div className="text-center py-5">
@@ -1366,15 +1464,13 @@ export default function ProviderLimits() {
                 aria-label="Custom accounts per page"
                 placeholder="Custom"
               />
-              <span className="text-xs text-text-muted">Page {pagination.page} / {pagination.totalPages}</span>
+              <span className="text-xs text-text-muted">Page {page} / {pagination.totalPages}</span>
             </div>
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 onClick={() => setPage(1)}
-                disabled={
-                  pagination.page <= 1 || connectionsLoading
-                }
+                disabled={page <= 1}
                 className="flex h-8 items-center rounded-lg border border-black/10 px-3 text-xs text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
               >
                 First Page
@@ -1384,9 +1480,7 @@ export default function ProviderLimits() {
                 onClick={() =>
                   setPage((currentPage) => Math.max(1, currentPage - 1))
                 }
-                disabled={
-                  pagination.page <= 1 || connectionsLoading
-                }
+                disabled={page <= 1}
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-black/10 text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
                 aria-label="Previous accounts page"
               >
@@ -1401,10 +1495,7 @@ export default function ProviderLimits() {
                     Math.min(pagination.totalPages, currentPage + 1),
                   )
                 }
-                disabled={
-                  pagination.page >= pagination.totalPages ||
-                  connectionsLoading
-                }
+                disabled={page >= pagination.totalPages}
                 className="flex h-8 w-8 items-center justify-center rounded-lg border border-black/10 text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
                 aria-label="Next accounts page"
               >
@@ -1415,10 +1506,7 @@ export default function ProviderLimits() {
               <button
                 type="button"
                 onClick={() => setPage(pagination.totalPages)}
-                disabled={
-                  pagination.page >= pagination.totalPages ||
-                  connectionsLoading
-                }
+                disabled={page >= pagination.totalPages}
                 className="flex h-8 items-center rounded-lg border border-black/10 px-3 text-xs text-text-primary transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-40 dark:border-white/10 dark:hover:bg-white/5"
               >
                 Last Page
