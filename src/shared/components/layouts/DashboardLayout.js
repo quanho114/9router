@@ -10,28 +10,32 @@ function getToastStyle(type) {
   if (type === "success") {
     return {
       wrapper:
-        "border-emerald-500/35 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 ",
+        "border-emerald-200 dark:border-emerald-500/40 bg-emerald-50/95 dark:bg-emerald-950/90 text-emerald-900 dark:text-emerald-100 shadow-lg backdrop-blur-md",
       icon: "check_circle",
+      iconClass: "text-emerald-600 dark:text-emerald-400",
     };
   }
   if (type === "error") {
     return {
       wrapper:
-        "border-red-500/35 bg-red-500/15 text-red-700 dark:text-red-300 ",
+        "border-red-200 dark:border-red-500/40 bg-red-50/95 dark:bg-red-950/90 text-red-900 dark:text-red-100 shadow-lg backdrop-blur-md",
       icon: "error",
+      iconClass: "text-red-600 dark:text-red-400",
     };
   }
   if (type === "warning") {
     return {
       wrapper:
-        "border-amber-500/35 bg-amber-500/15 text-amber-700 dark:text-amber-300 ",
+        "border-amber-200 dark:border-amber-500/40 bg-amber-50/95 dark:bg-amber-950/90 text-amber-900 dark:text-amber-100 shadow-lg backdrop-blur-md",
       icon: "warning",
+      iconClass: "text-amber-600 dark:text-amber-400",
     };
   }
   return {
     wrapper:
-      "border-sky-500/35 bg-sky-500/15 text-sky-700 dark:text-sky-300 ",
+      "border-sky-200 dark:border-sky-500/40 bg-sky-50/95 dark:bg-sky-950/90 text-sky-900 dark:text-sky-100 shadow-lg backdrop-blur-md",
     icon: "info",
+    iconClass: "text-sky-600 dark:text-sky-400",
   };
 }
 
@@ -72,10 +76,10 @@ export default function DashboardLayout({ children }) {
               className={`rounded-2xl border px-3.5 py-2.5 slide-in-top ${style.wrapper}`}
             >
               <div className="flex items-start gap-2.5">
-                <span className="material-symbols-outlined text-[18px] leading-5">{style.icon}</span>
+                <span className={`material-symbols-outlined text-[18px] leading-5 ${style.iconClass || ""}`}>{style.icon}</span>
                 <div className="min-w-0 flex-1">
                   {n.title ? <p className="text-xs font-semibold mb-0.5">{n.title}</p> : null}
-                  <p className="text-xs whitespace-pre-wrap break-words leading-relaxed">{n.message}</p>
+                  <p className="text-xs font-medium whitespace-pre-wrap break-words leading-relaxed">{n.message}</p>
                 </div>
                 {n.dismissible ? (
                   <button

@@ -89,6 +89,22 @@ export const QUOTA_AUTOPING_CONFIG = {
       pingInstructions: "Reply with OK.",
       pingReasoningEffort: "none",
     },
+    antigravity: {
+      settingsKey: "antigravityAutoPing",
+      quotaKey: "gemini_weekly",
+      quotaFallbackKeys: ["gemini_session", "argon_weekly", "argon_session", "gemini-3.8-flash-low", "gemini-3.7-flash-low"],
+      pingModel: "gemini-3.8-flash-low",
+      pingText: "hi",
+      pingMaxTokens: 1,
+    },
+    "gemini-cli": {
+      settingsKey: "geminiCliAutoPing",
+      quotaKey: "gemini-2.5-flash",
+      quotaFallbackKeys: ["gemini-2.5-flash-lite", "gemini-3-flash-preview"],
+      pingModel: "gemini-2.5-flash",
+      pingText: "hi",
+      pingMaxTokens: 1,
+    },
   },
 };
 

@@ -83,7 +83,7 @@ export async function getGeminiUsage(accessToken, providerSpecificData, proxyOpt
       }
     }
 
-    return { plan, quotas };
+    return { plan, quotas, projectId };
   } catch (error) {
     return { message: `Gemini CLI error: ${error.message}` };
   }

@@ -42,6 +42,22 @@ vi.mock("@/shared/constants/config", () => ({
         pingInstructions: "Reply with OK.",
         pingReasoningEffort: "none",
       },
+      antigravity: {
+        settingsKey: "antigravityAutoPing",
+        quotaKey: "gemini_weekly",
+        quotaFallbackKeys: ["gemini_session", "argon_weekly", "argon_session", "gemini-3.8-flash-low", "gemini-3.7-flash-low"],
+        pingModel: "gemini-3.8-flash-low",
+        pingText: "hi",
+        pingMaxTokens: 1,
+      },
+      "gemini-cli": {
+        settingsKey: "geminiCliAutoPing",
+        quotaKey: "gemini-2.5-flash",
+        quotaFallbackKeys: ["gemini-2.5-flash-lite", "gemini-3-flash-preview"],
+        pingModel: "gemini-2.5-flash",
+        pingText: "hi",
+        pingMaxTokens: 1,
+      },
     },
   },
 }));
@@ -66,6 +82,11 @@ vi.mock("open-sse/services/usage/codex.js", () => ({
   getCodexUsage: vi.fn(),
 }));
 
+vi.mock("open-sse/services/usage/google.js", () => ({
+  getAntigravityUsage: vi.fn(),
+  getGeminiUsage: vi.fn(),
+}));
+
 vi.mock("open-sse/executors/index.js", () => ({
   getExecutor: vi.fn(),
 }));
@@ -77,6 +98,8 @@ describe("quota auto-ping", () => {
   let state;
   let getCodexUsage;
   let getClaudeUsage;
+  let getAntigravityUsage;
+  let getGeminiUsage;
   let getExecutor;
   let codexResponseText;
 
@@ -88,6 +111,7 @@ describe("quota auto-ping", () => {
 
     ({ getCodexUsage } = await import("open-sse/services/usage/codex.js"));
     ({ getClaudeUsage } = await import("open-sse/services/usage/claude.js"));
+    ({ getAntigravityUsage, getGeminiUsage } = await import("open-sse/services/usage/google.js"));
     ({ getExecutor } = await import("open-sse/executors/index.js"));
     ({ runQuotaAutoPingTick, configureQuotaAutoPing } = await import("../../src/shared/services/quotaAutoPing.js"));
 
@@ -368,6 +392,66 @@ describe("quota auto-ping", () => {
       max_tokens: 1,
       messages: [{ role: "user", content: "hi" }],
     });
+  });
+
+  it("sends Antigravity ping when Gemini weekly quota reset passes", async () => {
+    deps.getSettings.mockResolvedValue({ antigravityAutoPing: { connections: { "ag-1": true } } });
+    deps.getProviderConnections.mockImplementation(async ({ provider }) => (
+      provider === "antigravity"
+        ? [{ id: "ag-1", provider: "antigravity", authType: "oauth", accessToken: "ag-token", email: "user@example.com" }]
+        : []
+    ));
+    getAntigravityUsage.mockResolvedValue({
+      subscriptionInfo: { cloudaicompanionProject: "proj-123" },
+      quotas: { gemini_weekly: { used: 0, total: 1000, resetAt: "2026-01-01T11:59:00.000Z" } },
+    });
+
+    await runQuotaAutoPingTick(deps, state);
+
+    const executor = deps.getExecutor.mock.results[0].value;
+    expect(deps.getExecutor).toHaveBeenCalledWith("antigravity");
+    expect(executor.execute).toHaveBeenCalledWith(expect.objectContaining({
+      model: "gemini-3.8-flash-low",
+      stream: false,
+      credentials: expect.objectContaining({
+        accessToken: "ag-token",
+        connectionId: "ag-1",
+        projectId: "proj-123",
+      }),
+    }));
+    expect(deps.updateProviderConnection).toHaveBeenCalledWith("ag-1", expect.objectContaining({
+      lastPingedResetAt: "2026-01-01T11:59:00.000Z",
+    }));
+  });
+
+  it("sends Gemini CLI ping when quota reset passes", async () => {
+    deps.getSettings.mockResolvedValue({ geminiCliAutoPing: { connections: { "gc-1": true } } });
+    deps.getProviderConnections.mockImplementation(async ({ provider }) => (
+      provider === "gemini-cli"
+        ? [{ id: "gc-1", provider: "gemini-cli", authType: "oauth", accessToken: "gc-token", projectId: "gc-proj" }]
+        : []
+    ));
+    getGeminiUsage.mockResolvedValue({
+      projectId: "gc-proj",
+      quotas: { "gemini-2.5-flash": { used: 0, total: 1000, resetAt: "2026-01-01T11:59:00.000Z" } },
+    });
+
+    await runQuotaAutoPingTick(deps, state);
+
+    const executor = deps.getExecutor.mock.results[0].value;
+    expect(deps.getExecutor).toHaveBeenCalledWith("gemini-cli");
+    expect(executor.execute).toHaveBeenCalledWith(expect.objectContaining({
+      model: "gemini-2.5-flash",
+      stream: false,
+      credentials: expect.objectContaining({
+        accessToken: "gc-token",
+        connectionId: "gc-1",
+        projectId: "gc-proj",
+      }),
+    }));
+    expect(deps.updateProviderConnection).toHaveBeenCalledWith("gc-1", expect.objectContaining({
+      lastPingedResetAt: "2026-01-01T11:59:00.000Z",
+    }));
   });
   describe("anchored schedule", () => {
     const schedule = {

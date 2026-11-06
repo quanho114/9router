@@ -4,6 +4,7 @@ import "open-sse/index.js";
 import { getSettings, getProviderConnections, updateProviderConnection } from "@/lib/localDb";
 import { getClaudeUsage } from "open-sse/services/usage/claude.js";
 import { getCodexUsage } from "open-sse/services/usage/codex.js";
+import { getAntigravityUsage, getGeminiUsage } from "open-sse/services/usage/google.js";
 import { getExecutor } from "open-sse/executors/index.js";
 import { CLAUDE_CLI_SPOOF_HEADERS } from "open-sse/providers/shared.js";
 import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
@@ -17,12 +18,20 @@ const CLAUDE_PING_URL = "https://api.anthropic.com/v1/messages?beta=true";
 
 const providerHandlers = {
   claude: {
-    getUsage: getClaudeUsage,
+    getUsage: (accessToken, proxyOptions) => getClaudeUsage(accessToken, proxyOptions),
     sendPing: sendClaudePing,
   },
   codex: {
-    getUsage: getCodexUsage,
+    getUsage: (accessToken, proxyOptions) => getCodexUsage(accessToken, proxyOptions),
     sendPing: sendCodexPing,
+  },
+  antigravity: {
+    getUsage: (accessToken, proxyOptions, connection) => getAntigravityUsage(accessToken, connection?.providerSpecificData, proxyOptions),
+    sendPing: sendAntigravityPing,
+  },
+  "gemini-cli": {
+    getUsage: (accessToken, proxyOptions, connection) => getGeminiUsage(accessToken, { ...(connection?.providerSpecificData || {}), projectId: connection?.projectId || connection?.providerSpecificData?.projectId }, proxyOptions),
+    sendPing: sendGeminiCliPing,
   },
 };
 
@@ -186,6 +195,90 @@ async function sendCodexPing(connection, providerConfig, proxyOptions, deps) {
   return true;
 }
 
+async function sendAntigravityPing(connection, providerConfig, proxyOptions, deps) {
+  const executor = deps.getExecutor("antigravity");
+  const projectId = connection.projectId || connection.providerSpecificData?.projectId || undefined;
+  const { response } = await executor.execute({
+    model: providerConfig.pingModel,
+    stream: false,
+    credentials: {
+      accessToken: connection.accessToken,
+      connectionId: connection.id,
+      email: connection.email,
+      projectId,
+      providerSpecificData: connection.providerSpecificData,
+    },
+    proxyOptions,
+    log: console,
+    body: {
+      model: providerConfig.pingModel,
+      request: {
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: providerConfig.pingText || "hi" }],
+          },
+        ],
+        generationConfig: {
+          maxOutputTokens: providerConfig.pingMaxTokens || 1,
+        },
+      },
+    },
+  });
+  if (!response?.ok) {
+    try { await response?.body?.cancel?.(); } catch { /* noop */ }
+    return false;
+  }
+  await drainResponseBody(response);
+  return true;
+}
+
+async function sendGeminiCliPing(connection, providerConfig, proxyOptions, deps) {
+  const executor = deps.getExecutor("gemini-cli");
+  const projectId = connection.projectId || connection.providerSpecificData?.projectId || undefined;
+  const { response } = await executor.execute({
+    model: providerConfig.pingModel,
+    stream: false,
+    credentials: {
+      accessToken: connection.accessToken,
+      connectionId: connection.id,
+      email: connection.email,
+      projectId,
+      providerSpecificData: connection.providerSpecificData,
+    },
+    proxyOptions,
+    log: console,
+    body: {
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: providerConfig.pingText || "hi" }],
+        },
+      ],
+      generationConfig: {
+        maxOutputTokens: providerConfig.pingMaxTokens || 1,
+      },
+    },
+  });
+  if (!response?.ok) {
+    try { await response?.body?.cancel?.(); } catch { /* noop */ }
+    return false;
+  }
+  await drainResponseBody(response);
+  return true;
+}
+
+function resolveProviderQuota(quotas, providerConfig) {
+  if (!quotas || typeof quotas !== "object") return null;
+  if (quotas[providerConfig.quotaKey]) return quotas[providerConfig.quotaKey];
+  if (Array.isArray(providerConfig.quotaFallbackKeys)) {
+    for (const k of providerConfig.quotaFallbackKeys) {
+      if (quotas[k]) return quotas[k];
+    }
+  }
+  return null;
+}
+
 function shouldSkipAfterFailure(state, key, nowMs = Date.now()) {
   const failedAt = state.failureCache[key];
   return failedAt && nowMs - failedAt < C.failureCooldownMs;
@@ -215,9 +308,16 @@ async function pingConnection(conn, provider, providerConfig, handler, deps, sta
     return;
   }
 
-  const usage = await handler.getUsage(connection.accessToken, proxyOptions);
+  const usage = await handler.getUsage(connection.accessToken, proxyOptions, connection);
+  const resolvedProjectId = usage?.projectId || usage?.subscriptionInfo?.cloudaicompanionProject;
+  if (resolvedProjectId && !connection.projectId) {
+    connection = {
+      ...connection,
+      projectId: typeof resolvedProjectId === "string" ? resolvedProjectId : resolvedProjectId?.id || undefined,
+    };
+  }
   const quotas = usage?.quotas || {};
-  const quota = quotas?.[providerConfig.quotaKey];
+  const quota = resolveProviderQuota(quotas, providerConfig);
   const resetAt = quota?.resetAt;
   if (resetAt) state.resetCache[key] = resetAt;
 
