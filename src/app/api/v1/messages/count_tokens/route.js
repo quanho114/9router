@@ -76,6 +76,9 @@ export async function POST(request) {
   let body;
   try {
     body = await request.json();
+    if (body && typeof body.__9router_b64 === "string") {
+      body = JSON.parse(Buffer.from(body.__9router_b64, "base64").toString("utf8"));
+    }
   } catch {
     return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
       status: 400,
@@ -91,4 +94,3 @@ export async function POST(request) {
     headers: { "Content-Type": "application/json", ...CORS_HEADERS }
   });
 }
-

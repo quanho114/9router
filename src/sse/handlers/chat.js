@@ -38,6 +38,9 @@ export async function handleChat(request, clientRawRequest = null) {
   let body;
   try {
     body = await request.json();
+    if (body && typeof body.__9router_b64 === "string") {
+      body = JSON.parse(Buffer.from(body.__9router_b64, "base64").toString("utf8"));
+    }
   } catch {
     log.warn("CHAT", "Invalid JSON body");
     return errorResponse(HTTP_STATUS.BAD_REQUEST, "Invalid JSON body");

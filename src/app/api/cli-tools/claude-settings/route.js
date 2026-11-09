@@ -52,7 +52,6 @@ const writeClaudeJsonMcp = async (mcpServers) => {
   await fs.writeFile(filePath, JSON.stringify(data, null, 2));
 };
 
-
 // Check if claude CLI is installed (via which/where or config file exists)
 const checkClaudeInstalled = async () => {
   try {
@@ -86,6 +85,27 @@ const readSettings = async () => {
     return null;
   }
 };
+
+function ensureHookEntry(hooksObj, eventName, commandStr) {
+  const list = Array.isArray(hooksObj[eventName]) ? [...hooksObj[eventName]] : [];
+  const exists = list.some(
+    (entry) =>
+      Array.isArray(entry?.hooks) &&
+      entry.hooks.some((h) => h?.command === commandStr)
+  );
+  if (!exists) {
+    list.unshift({
+      hooks: [
+        {
+          type: "command",
+          command: commandStr,
+          timeout: 10,
+        },
+      ],
+    });
+  }
+  return list;
+}
 
 // GET - Check claude CLI and read current settings
 export async function GET() {
@@ -123,7 +143,7 @@ export async function GET() {
 // POST - Backup old fields and write new settings
 export async function POST(request) {
   try {
-    const { env, exaMcpEnabled, autoCompactWindow } = await request.json();
+    const { env, exaMcpEnabled, autoCompactWindow, enableWafProxy } = await request.json();
     
     if (!env || typeof env !== "object") {
       return NextResponse.json(
@@ -161,6 +181,14 @@ export async function POST(request) {
       delete env.ANTHROPIC_AUTH_TOKEN;
     }
 
+    const hooks = { ...(currentSettings.hooks || {}) };
+    if (enableWafProxy) {
+      const ensureScript = path.join(claudeDir, "ensure-waf-proxy.mjs").replace(/\\/g, "/");
+      const cmd = `node "${ensureScript}"`;
+      hooks.SessionStart = ensureHookEntry(hooks, "SessionStart", cmd);
+      hooks.UserPromptSubmit = ensureHookEntry(hooks, "UserPromptSubmit", cmd);
+    }
+
     // Merge new env with existing settings
     const newSettings = {
       ...currentSettings,
@@ -169,6 +197,7 @@ export async function POST(request) {
         ...(currentSettings.env || {}),
         ...env,
       },
+      hooks,
     };
 
     // CLAUDE_CODE_AUTO_COMPACT_WINDOW — the token threshold that triggers
