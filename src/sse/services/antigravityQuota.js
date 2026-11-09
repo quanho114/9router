@@ -114,9 +114,23 @@ export function getAntigravityModelQuota(quotas, model) {
   } else if (family === "argon") {
     if (quotas.argon_session) candidates.push(quotas.argon_session);
     if (quotas.argon_weekly) candidates.push(quotas.argon_weekly);
-    if (!quotas.argon_session && !quotas.argon_weekly) {
-      if (quotas.gemini_session) candidates.push(quotas.gemini_session);
-      if (quotas.gemini_weekly) candidates.push(quotas.gemini_weekly);
+    if (candidates.length === 0) {
+      const hasOnlyGeminiQuota = Boolean(quotas.gemini_session || quotas.gemini_weekly) &&
+        !Object.keys(quotas).some((k) => k.includes("argon"));
+      if (quotas._isFreeTier || hasOnlyGeminiQuota) {
+        const resetAt =
+          quotas.gemini_weekly?.resetAt ||
+          quotas.gemini_session?.resetAt ||
+          new Date(Date.now() + 24 * 60 * 60_000).toISOString();
+        return {
+          used: 1000,
+          total: 1000,
+          remainingPercentage: 0,
+          resetAt,
+          displayName: cleanModel,
+          unsupported: true,
+        };
+      }
     }
   } else if (family === "gemini") {
     if (quotas.gemini_session) candidates.push(quotas.gemini_session);
@@ -224,6 +238,22 @@ export async function refreshAntigravityQuota(connectionId, accessToken, provide
   }
 }
 
+/**
+ * Seed the in-memory quota cache from an already-fetched usage payload
+ * (e.g. from Dashboard /api/usage or QuotaAutoPing).
+ */
+export function seedAntigravityQuotaCache(connectionId, usage) {
+  if (!connectionId || !usage?.quotas || usage.message) return null;
+  const paidTierId = usage.subscriptionInfo?.paidTier?.id;
+  if (usage.subscriptionInfo && (!paidTierId || paidTierId === "free-tier")) {
+    Object.defineProperty(usage.quotas, "_isFreeTier", { value: true, enumerable: false, configurable: true });
+  }
+  const merged = applyActiveStrikeBlocks(connectionId, usage.quotas);
+  quotaCache.set(connectionId, merged);
+  lastRefreshAt.set(connectionId, Date.now());
+  return merged;
+}
+
 async function _doRefresh(connectionId, accessToken, providerSpecificData, now) {
   try {
     const proxyCfg = await resolveConnectionProxyConfig(providerSpecificData || {});
@@ -243,9 +273,7 @@ async function _doRefresh(connectionId, accessToken, providerSpecificData, now) 
     // Update in-memory cache. Caller logs CACHE_BLOCK only if requested model is exhausted.
     // Strike blocks are re-asserted after every refresh so an optimistic
     // upstream reading cannot resurrect a pair we just circuit-broke.
-    quotaCache.set(connectionId, applyActiveStrikeBlocks(connectionId, usage.quotas));
-
-    return usage.quotas;
+    return seedAntigravityQuotaCache(connectionId, usage);
   } catch (e) {
     log.warn("AG_QUOTA", `${connectionId.slice(0, 8)} | refresh failed: ${e.message}`);
     return null;
@@ -273,6 +301,7 @@ export async function handleAntigravityQuotaError(connectionId, status, model, a
   // retry" was motivated by 409/429 pairs), and poisoning by transient 409s
   // requires 3 of them inside 60 seconds on the same pair.
   if (!quota || quota.remainingPercentage > 0) {
+    if (status !== 409 && status !== 429) return null;
     const key = `${connectionId}|${model}`;
     const now = Date.now();
     const strike = strikeCounts.get(key);

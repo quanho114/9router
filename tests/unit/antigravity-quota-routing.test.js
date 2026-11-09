@@ -27,7 +27,7 @@ vi.mock("open-sse/services/usage/google.js", () => ({
 }));
 vi.mock("@/sse/utils/logger.js", () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }));
 
-const { getAntigravityQuotaCache, handleAntigravityQuotaError, refreshAntigravityQuota, clearAntigravityStrikes } = await import("@/sse/services/antigravityQuota.js");
+const { getAntigravityQuotaCache, getAntigravityModelQuota, handleAntigravityQuotaError, refreshAntigravityQuota, clearAntigravityStrikes } = await import("@/sse/services/antigravityQuota.js");
 const { getProviderCredentials } = await import("@/sse/services/auth.js");
 
 const MODEL = "claude-opus-4-6-thinking";
@@ -308,7 +308,6 @@ describe("Antigravity quota-aware routing", () => {
     // treats cached 0% as exhausted).
     expect(getAntigravityQuotaCache().get("ag-optimistic")?.[MODEL]?.remainingPercentage).toBe(90);
   });
-});
 
   it("checks shared family summary quota (claude_gpt_session / weekly)", async () => {
     vi.useFakeTimers();
@@ -360,3 +359,85 @@ describe("Antigravity quota-aware routing", () => {
       vi.useRealTimers();
     }
   });
+
+  it("treats standard/free-tier accounts without Argon quota as unsupported (0%) for Argon models while keeping Gemini Flash available", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-26T00:00:00.000Z"));
+    const freeTierQuotas = {
+      gemini_weekly: { remainingPercentage: 85, resetAt: FUTURE_RESET },
+    };
+
+    try {
+      const argonQuota = getAntigravityModelQuota(freeTierQuotas, "gemini-4-argon-medium");
+      expect(argonQuota).toMatchObject({
+        remainingPercentage: 0,
+        resetAt: FUTURE_RESET,
+        unsupported: true,
+      });
+
+      const flashQuota = getAntigravityModelQuota(freeTierQuotas, "gemini-3.8-flash-medium");
+      expect(flashQuota).toMatchObject({
+        remainingPercentage: 85,
+        resetAt: FUTURE_RESET,
+      });
+
+      // When a free-tier account is hit with an Argon request and errors out,
+      // handleAntigravityQuotaError must immediately cache-block it (no 3-strike wait).
+      mocks.getAntigravityUsage.mockResolvedValue({
+        quotas: { gemini_weekly: { remainingPercentage: 85, resetAt: FUTURE_RESET } },
+        subscriptionInfo: { paidTier: { id: "free-tier" } },
+      });
+      const resetMs = await handleAntigravityQuotaError("ag-free", 429, "gemini-4-argon-medium", "token", {});
+      expect(resetMs).toBe(Date.parse(FUTURE_RESET));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("skips standard/free-tier accounts when routing Argon after Pro account exhaustion", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-26T00:00:00.000Z"));
+    const proReset = "2026-08-26T05:00:00.000Z";
+    const freeReset = "2026-08-26T01:00:00.000Z";
+
+    mocks.getProviderConnections.mockResolvedValue([
+      { id: "ag-pro-1", email: "pro1@example.com", isActive: true },
+      { id: "ag-free", email: "free@example.com", isActive: true },
+      { id: "ag-pro-2", email: "pro2@example.com", isActive: true },
+    ]);
+
+    getAntigravityQuotaCache().set("ag-pro-1", {
+      argon_session: { remainingPercentage: 0, resetAt: proReset },
+      argon_weekly: { remainingPercentage: 60, resetAt: FUTURE_RESET },
+    });
+    getAntigravityQuotaCache().set("ag-free", {
+      gemini_weekly: { remainingPercentage: 90, resetAt: freeReset },
+    });
+    getAntigravityQuotaCache().set("ag-pro-2", {
+      argon_session: { remainingPercentage: 75, resetAt: proReset },
+      argon_weekly: { remainingPercentage: 80, resetAt: FUTURE_RESET },
+    });
+
+    try {
+      // Argon request must skip both exhausted ag-pro-1 AND unsupported ag-free, picking ag-pro-2
+      const argonCreds = await getProviderCredentials("antigravity", null, "gemini-4-argon-medium");
+      expect(argonCreds.connectionId).toBe("ag-pro-2");
+
+      // Flash request can still use ag-free
+      const flashCreds = await getProviderCredentials("antigravity", new Set(["ag-pro-1"]), "gemini-3.8-flash-medium");
+      expect(flashCreds.connectionId).toBe("ag-free");
+
+      // If ag-pro-2 is also exhausted, allRateLimited retryAfter must reflect Pro reset time, not free-tier gemini_weekly
+      getAntigravityQuotaCache().set("ag-pro-2", {
+        argon_session: { remainingPercentage: 0, resetAt: proReset },
+      });
+      const allBlocked = await getProviderCredentials("antigravity", null, "gemini-4-argon-medium");
+      expect(allBlocked).toMatchObject({
+        allRateLimited: true,
+        retryAfter: proReset,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

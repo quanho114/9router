@@ -7,7 +7,14 @@ import {
   extractApiKey,
   isValidApiKey,
 } from "../services/auth.js";
-import { handleAntigravityQuotaError, clearAntigravityStrikes } from "../services/antigravityQuota.js";
+import {
+  handleAntigravityQuotaError,
+  clearAntigravityStrikes,
+  getAntigravityQuotaCache,
+  getAntigravityModelFamily,
+  getAntigravityModelQuota,
+  refreshAntigravityQuota,
+} from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
@@ -316,6 +323,27 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       }
     }
 
+    // When rotating to a fallback Antigravity account for an Argon model whose quota/tier
+    // is not yet cached, check quota upfront so free-tier accounts are skipped immediately.
+    if (
+      provider === "antigravity" &&
+      excludeConnectionIds.size > 0 &&
+      getAntigravityModelFamily(model) === "argon" &&
+      !getAntigravityQuotaCache().has(credentials.connectionId)
+    ) {
+      const quotas = await refreshAntigravityQuota(
+        credentials.connectionId,
+        refreshedCredentials.accessToken,
+        credentials.providerSpecificData
+      );
+      const quota = getAntigravityModelQuota(quotas, model);
+      if (quota && quota.remainingPercentage <= 0 && quota.resetAt && new Date(quota.resetAt).getTime() > Date.now()) {
+        log.info("AG_QUOTA", `${credentials.connectionId.slice(0, 8)} | PREFLIGHT_SKIP ${model} — unsupported/exhausted on fallback account`);
+        excludeConnectionIds.add(credentials.connectionId);
+        continue;
+      }
+    }
+
     // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
@@ -367,10 +395,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     if (result.success) return result.response;
 
-    // Antigravity 409/429: refresh live quota to get exact resetAt before locking
+    // Antigravity 409/429 (or 400/403/404 on Argon models for free-tier accounts):
+    // refresh live quota to detect exhausted/unsupported tier before locking.
     let quotaResetMs = null;
     let resetsAtMs = result.resetsAtMs;
-    if (provider === "antigravity" && (result.status === 409 || result.status === 429)) {
+    const isAntigravityArgonTierError =
+      provider === "antigravity" &&
+      getAntigravityModelFamily(model) === "argon" &&
+      (result.status === 400 || result.status === 403 || result.status === 404);
+    if (provider === "antigravity" && (result.status === 409 || result.status === 429 || isAntigravityArgonTierError)) {
       quotaResetMs = await handleAntigravityQuotaError(
         credentials.connectionId, result.status, model,
         refreshedCredentials.accessToken, credentials.providerSpecificData

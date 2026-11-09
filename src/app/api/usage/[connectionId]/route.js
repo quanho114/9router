@@ -7,6 +7,7 @@ import { isUnrecoverableRefreshError } from "open-sse/services/tokenRefresh.js";
 import { getExecutor } from "open-sse/executors/index.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { USAGE_APIKEY_PROVIDERS } from "@/shared/constants/providers";
+import { seedAntigravityQuotaCache } from "@/sse/services/antigravityQuota.js";
 
 // Detect auth-expired messages returned by usage providers instead of throwing
 const AUTH_EXPIRED_PATTERNS = ["expired", "authentication", "unauthorized", "401", "re-authorize"];
@@ -192,6 +193,10 @@ export async function GET(request, { params }) {
       } catch (retryError) {
         console.warn(`[Usage] ${connection.provider}: force refresh failed: ${retryError.message}`);
       }
+    }
+
+    if (connection.provider === "antigravity" && usage?.quotas && !usage.message) {
+      seedAntigravityQuotaCache(connection.id, usage);
     }
 
     return Response.json(usage);

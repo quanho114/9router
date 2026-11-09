@@ -28,6 +28,43 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
     expect(await ag.computeRetryDelay(r, 1)).toBe(3000);
   });
 
+  it("vetoes retry immediately when error.details quotaResetTimeStamp or retryDelay exceeds cap", async () => {
+    const futureIso = new Date(Date.now() + 3600_000).toISOString();
+    const byTimestamp = res(429, {}, {
+      error: {
+        message: "Resource has been exhausted (e.g. check quota).",
+        details: [{ metadata: { quotaResetTimeStamp: futureIso } }],
+      },
+    });
+    expect(await ag.computeRetryDelay(byTimestamp, 1)).toBe(false);
+
+    const byRetryInfo = res(429, {}, {
+      error: {
+        message: "Resource has been exhausted.",
+        details: [{ retryDelay: "120s" }],
+      },
+    });
+    expect(await ag.computeRetryDelay(byRetryInfo, 1)).toBe(false);
+
+    const zeroLimit = res(429, {}, {
+      error: {
+        message: "Quota exceeded for quota metric",
+        details: [{ metadata: { quotaLimitValue: "0" } }],
+      },
+    });
+    expect(await ag.computeRetryDelay(zeroLimit, 1)).toBe(false);
+  });
+
+  it("uses short retryDelay from error.details when within cap", async () => {
+    const r = res(429, {}, {
+      error: {
+        message: "Rate limit reached",
+        details: [{ retryDelay: "4s" }],
+      },
+    });
+    expect(await ag.computeRetryDelay(r, 1)).toBe(4000);
+  });
+
   it("exponential backoff for 429 when no retry info", async () => {
     expect(await ag.computeRetryDelay(res(429), 1)).toBe(Math.min(1000 * 2 ** 1, MAX));
     expect(await ag.computeRetryDelay(res(429), 3)).toBe(Math.min(1000 * 2 ** 3, MAX));

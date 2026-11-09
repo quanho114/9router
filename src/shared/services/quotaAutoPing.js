@@ -12,6 +12,7 @@ import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { refreshAndUpdateCredentials } from "@/app/api/usage/[connectionId]/route.js";
 import { QUOTA_AUTOPING_CONFIG } from "@/shared/constants/config";
 import { getDuePingSlot, normalizePingSchedule } from "@/shared/services/quotaPingSchedule";
+import { seedAntigravityQuotaCache } from "@/sse/services/antigravityQuota.js";
 
 const C = QUOTA_AUTOPING_CONFIG;
 const CLAUDE_PING_URL = "https://api.anthropic.com/v1/messages?beta=true";
@@ -26,7 +27,13 @@ const providerHandlers = {
     sendPing: sendCodexPing,
   },
   antigravity: {
-    getUsage: (accessToken, proxyOptions, connection) => getAntigravityUsage(accessToken, connection?.providerSpecificData, proxyOptions, { bypassCache: true }),
+    getUsage: async (accessToken, proxyOptions, connection) => {
+      const usage = await getAntigravityUsage(accessToken, connection?.providerSpecificData, proxyOptions, { bypassCache: true });
+      if (connection?.id && usage?.quotas && !usage.message) {
+        seedAntigravityQuotaCache(connection.id, usage);
+      }
+      return usage;
+    },
     sendPing: sendAntigravityPing,
   },
   "gemini-cli": {

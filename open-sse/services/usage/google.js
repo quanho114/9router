@@ -163,6 +163,9 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
     // (missing remainingFraction defaults to 0, or reflects the weekly limit not a 5h window).
     const paidTierId = subscriptionInfo?.paidTier?.id;
     const isFreeTier = !paidTierId || paidTierId === "free-tier";
+    if (isFreeTier && subscriptionInfo) {
+      Object.defineProperty(quotas, "_isFreeTier", { value: true, enumerable: false, configurable: true });
+    }
 
     // Parse model quotas only for paid-tier accounts.
     // Free-tier accounts skip this — their only meaningful quota is the weekly limit.

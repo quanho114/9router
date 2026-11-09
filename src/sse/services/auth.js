@@ -120,7 +120,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         connections.forEach((c) => {
           const connQuotas = antigravityQuotaCache.get(c.id);
           const quota = getAntigravityModelQuota(connQuotas, model) || connQuotas?.[model];
-          const resetAt = quota?.resetAt;
+          const resetAt = !quota?.unsupported ? quota?.resetAt : null;
           if (resetAt && new Date(resetAt).getTime() > Date.now()) expiries.push(resetAt);
         });
       }

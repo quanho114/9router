@@ -454,6 +454,24 @@ export class AntigravityExecutor extends BaseExecutor {
     return ANTIGRAVITY_TRANSIENT_ERROR_PATTERNS.some(pattern => pattern.test(message || ""));
   }
 
+  extractQuotaResetDelayMs(errorJson) {
+    const details = Array.isArray(errorJson?.error?.details) ? errorJson.error.details : [];
+    for (const d of details) {
+      if (d?.metadata?.quotaLimitValue === "0") {
+        return Number.POSITIVE_INFINITY;
+      }
+      if (d?.metadata?.quotaResetTimeStamp) {
+        const ms = new Date(d.metadata.quotaResetTimeStamp).getTime() - Date.now();
+        if (!isNaN(ms) && ms > 0) return ms;
+      }
+      if (typeof d?.retryDelay === "string") {
+        const sec = parseFloat(d.retryDelay);
+        if (!isNaN(sec) && sec > 0) return Math.round(sec * 1000);
+      }
+    }
+    return null;
+  }
+
   // Hook called by BaseExecutor.tryRetry: derive delay from Retry-After (header → body),
   // cap at MAX_RETRY_AFTER_MS, else retry transient Antigravity failures with backoff.
   // Return false to veto (fallback URL / final error).
@@ -471,6 +489,9 @@ export class AntigravityExecutor extends BaseExecutor {
 
     const errorMessage = this.extractErrorMessage(errorJson, bodyText);
 
+    if (!retryMs) {
+      retryMs = this.extractQuotaResetDelayMs(errorJson);
+    }
     if (!retryMs) {
       retryMs = this.parseRetryFromErrorMessage(errorMessage);
     }
