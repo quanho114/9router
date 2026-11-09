@@ -116,15 +116,22 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       // Find earliest persistent lock or lazy Antigravity quota-cache reset for retry timing.
       const lockedConns = connections.filter(c => isModelLockActive(c, model));
       const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
+      const unsupportedExpiries = [];
       if (isAntigravity && model && antigravityQuotaCache) {
         connections.forEach((c) => {
           const connQuotas = antigravityQuotaCache.get(c.id);
           const quota = getAntigravityModelQuota(connQuotas, model) || connQuotas?.[model];
-          const resetAt = !quota?.unsupported ? quota?.resetAt : null;
-          if (resetAt && new Date(resetAt).getTime() > Date.now()) expiries.push(resetAt);
+          const resetAt = quota?.resetAt;
+          if (resetAt && new Date(resetAt).getTime() > Date.now()) {
+            if (quota?.unsupported) {
+              unsupportedExpiries.push(resetAt);
+            } else {
+              expiries.push(resetAt);
+            }
+          }
         });
       }
-      const earliest = expiries.sort()[0] || null;
+      const earliest = expiries.sort()[0] || unsupportedExpiries.sort()[0] || null;
       if (earliest) {
         const earliestConn = lockedConns[0];
         log.warn("AUTH", `${provider} | all ${connections.length} accounts locked for ${model || "all"} (${formatRetryAfter(earliest)}) | lastError=${earliestConn?.lastError?.slice(0, 50)}`);

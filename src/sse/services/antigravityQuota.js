@@ -112,16 +112,18 @@ export function getAntigravityModelQuota(quotas, model) {
     if (quotas.claude_gpt_session) candidates.push(quotas.claude_gpt_session);
     if (quotas.claude_gpt_weekly) candidates.push(quotas.claude_gpt_weekly);
   } else if (family === "argon") {
-    if (quotas.argon_session) candidates.push(quotas.argon_session);
-    if (quotas.argon_weekly) candidates.push(quotas.argon_weekly);
+    if (!quotas._isFreeTier) {
+      if (quotas.argon_session) candidates.push(quotas.argon_session);
+      if (quotas.argon_weekly) candidates.push(quotas.argon_weekly);
+    }
     if (candidates.length === 0) {
       const hasOnlyGeminiQuota = Boolean(quotas.gemini_session || quotas.gemini_weekly) &&
         !Object.keys(quotas).some((k) => k.includes("argon"));
       if (quotas._isFreeTier || hasOnlyGeminiQuota) {
-        const resetAt =
-          quotas.gemini_weekly?.resetAt ||
-          quotas.gemini_session?.resetAt ||
-          new Date(Date.now() + 24 * 60 * 60_000).toISOString();
+        const candidateReset = quotas.gemini_weekly?.resetAt || quotas.gemini_session?.resetAt;
+        const resetAt = candidateReset && new Date(candidateReset).getTime() > Date.now()
+          ? candidateReset
+          : new Date(Date.now() + 24 * 60 * 60_000).toISOString();
         return {
           used: 1000,
           total: 1000,

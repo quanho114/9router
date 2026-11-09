@@ -436,6 +436,16 @@ describe("Antigravity quota-aware routing", () => {
         allRateLimited: true,
         retryAfter: proReset,
       });
+
+      // Even if ONLY free-tier accounts are configured or cached, it returns allRateLimited (no infinite loop)
+      mocks.getProviderConnections.mockResolvedValue([
+        { id: "ag-free", email: "free@example.com", isActive: true },
+      ]);
+      const onlyFreeBlocked = await getProviderCredentials("antigravity", null, "gemini-4-argon-medium");
+      expect(onlyFreeBlocked).toMatchObject({
+        allRateLimited: true,
+        retryAfter: freeReset,
+      });
     } finally {
       vi.useRealTimers();
     }

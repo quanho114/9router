@@ -327,7 +327,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // is not yet cached, check quota upfront so free-tier accounts are skipped immediately.
     if (
       provider === "antigravity" &&
-      excludeConnectionIds.size > 0 &&
+      (excludeConnectionIds.size > 0 || getAntigravityQuotaCache().size > 0) &&
       getAntigravityModelFamily(model) === "argon" &&
       !getAntigravityQuotaCache().has(credentials.connectionId)
     ) {
