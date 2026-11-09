@@ -33,6 +33,19 @@ describe("toolDeduper — MCP-equivalent built-in rules (existing behavior)", ()
     expect(stripped).toEqual([]);
   });
 
+  it("cleans references to stripped tools without dropping available references", () => {
+    const removed = { type: "tool_reference", tool_name: "WebSearch" };
+    const kept = { type: "tool_reference", tool_name: "Bash" };
+    const mixed = { type: "tool_result", content: [removed, kept] };
+    const empty = { type: "tool_result", content: [removed] };
+    const messages = [{ role: "user", content: [mixed, empty] }];
+
+    dedupeTools([MCP_EXA, { name: "WebSearch" }, BASH()], { clientTool: "claude", messages });
+
+    expect(mixed.content).toEqual([kept]);
+    expect(empty.content).toEqual([{ type: "text", text: "[Tool WebSearch is unavailable]" }]);
+  });
+
   it("legacy call without opts still applies MCP rules for claude callers (back-compat shape)", () => {
     // chatCore always passes opts now, but old direct callers keep prior behavior:
     // without clientTool, MCP rules stay dormant (they were claude-gated anyway).

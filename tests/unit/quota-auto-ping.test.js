@@ -503,13 +503,10 @@ describe("quota auto-ping", () => {
 
     await runQuotaAutoPingTick(deps, state);
 
-    const executor = deps.getExecutor.mock.results[0].value;
-    expect(executor.execute).toHaveBeenCalledWith(expect.objectContaining({
-      model: "gemini-4-argon-low",
-    }));
-    expect(executor.execute).toHaveBeenCalledWith(expect.objectContaining({
-      model: "gemini-3.8-flash-low",
-    }));
+    const pingedModels = deps.getExecutor.mock.results.flatMap(({ value: executor }) =>
+      executor.execute.mock.calls.map(([request]) => request.model)
+    );
+    expect(pingedModels.sort()).toEqual(["gemini-3.8-flash-low", "gemini-4-argon-low"]);
   });
 
   it("sends Gemini CLI ping when quota reset passes", async () => {
