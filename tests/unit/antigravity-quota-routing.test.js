@@ -450,4 +450,35 @@ describe("Antigravity quota-aware routing", () => {
       vi.useRealTimers();
     }
   });
+
+  it("treats 999/1000 (0.1% remaining, 0% rounded) Argon weekly quota as exhausted and preserves Argon weekly when present on non-paidTier accounts", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-26T00:00:00.000Z"));
+    const resetAt = "2026-08-31T00:00:00.000Z";
+
+    try {
+      // 999/1000 used => remainingPercentage: 0.1 (rounds to 0% left on dashboard)
+      const nearEmptyQuotas = {
+        argon_weekly: { used: 999, total: 1000, remainingPercentage: 0.1, resetAt },
+      };
+      const resolved = getAntigravityModelQuota(nearEmptyQuotas, "gemini-4-argon-medium");
+      expect(resolved).toMatchObject({
+        remainingPercentage: 0,
+        resetAt,
+      });
+
+      // Account with _isFreeTier flag but actual argon_weekly quota (>0%) stays usable
+      const hybridQuotas = {
+        argon_weekly: { used: 85, total: 1000, remainingPercentage: 91.5, resetAt },
+      };
+      Object.defineProperty(hybridQuotas, "_isFreeTier", { value: true, enumerable: false });
+      const hybridResolved = getAntigravityModelQuota(hybridQuotas, "gemini-4-argon-medium");
+      expect(hybridResolved).toMatchObject({
+        remainingPercentage: 91.5,
+        resetAt,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

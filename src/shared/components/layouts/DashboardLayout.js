@@ -6,7 +6,6 @@ import { useNotificationStore } from "@/store/notificationStore";
 import { markDashboardHydrated, readCache, writeCache } from "@/shared/utils/dashboardCache";
 import Sidebar from "../Sidebar";
 import Header from "../Header";
-import { DashboardPageSkeleton } from "../Loading";
 
 const PREFETCH_ROUTES = [
   "/dashboard/endpoint",
@@ -77,25 +76,13 @@ export default function DashboardLayout({ children }) {
   const isNavigating = Boolean(
     pendingNav && pendingNav.from === pathname && pendingNav.target !== pathname
   );
-  const showNavSkeleton = isNavigating && Boolean(pendingNav?.showSkeleton);
   const effectivePathname = isNavigating ? pendingNav.target : pathname;
 
-  // Clear pending state as soon as Next.js commits the route transition
-  useEffect(() => {
-    setPendingNav(null);
-  }, [pathname]);
-
-  // Defer navigation skeleton briefly so prefetched routes render in 0ms without skeleton flash
+  // Safety fallback in case navigation is cancelled or intercepted
   useEffect(() => {
     if (!isNavigating) return;
-    const skeletonTimer = setTimeout(() => {
-      setPendingNav((prev) => (prev ? { ...prev, showSkeleton: true } : null));
-    }, 200);
     const resetTimer = setTimeout(() => setPendingNav(null), 5000);
-    return () => {
-      clearTimeout(skeletonTimer);
-      clearTimeout(resetTimer);
-    };
+    return () => clearTimeout(resetTimer);
   }, [isNavigating]);
 
   const handleNavigate = useCallback(
@@ -225,10 +212,7 @@ export default function DashboardLayout({ children }) {
         <Header activePathname={effectivePathname} onMenuClick={() => setSidebarOpen(true)} />
         <div className={`flex-1 overflow-y-auto custom-scrollbar ${effectivePathname === "/dashboard/basic-chat" ? "" : "p-5 lg:p-9"} ${effectivePathname === "/dashboard/basic-chat" ? "flex flex-col overflow-hidden" : ""}`}>
           <div className={`${effectivePathname === "/dashboard/basic-chat" ? "flex-1 w-full h-full flex flex-col" : "max-w-7xl mx-auto"}`}>
-            {showNavSkeleton && <DashboardPageSkeleton pathname={effectivePathname} />}
-            <div className={showNavSkeleton ? "hidden" : "contents"}>
-              {children}
-            </div>
+            {children}
           </div>
         </div>
       </main>

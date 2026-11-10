@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import {
   AreaChart,
@@ -37,15 +37,17 @@ const VIEW_CONFIG = {
 
 const chartDataCache = new Map();
 
-export default function UsageChart({ period = "7d" }) {
+export default function UsageChart({ period = "7d", refreshKey = 0 }) {
   const initialChart =
     chartDataCache.get(period) || getInitialCache(`usageChart:${period}`, null);
   const [data, setData] = useState(() => initialChart || []);
   const [loading, setLoading] = useState(() => !initialChart);
   const [viewMode, setViewMode] = useState("tokens");
 
-  const fetchData = useCallback(async () => {
+  useEffect(() => {
+    let cancelled = false;
     runWithCache(() => {
+      if (cancelled) return;
       const cached =
         chartDataCache.get(period) || readCache(`usageChart:${period}`, null);
       if (cached) {
@@ -56,24 +58,24 @@ export default function UsageChart({ period = "7d" }) {
         setLoading(true);
       }
     });
-    try {
-      const res = await fetch(`/api/usage/chart?period=${period}`);
-      if (res.ok) {
-        const json = await res.json();
+    fetch(`/api/usage/chart?period=${period}`, { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (cancelled || !json) return;
         chartDataCache.set(period, json);
         writeCache(`usageChart:${period}`, json);
         setData(json);
-      }
-    } catch (e) {
-      console.error("Failed to fetch chart data:", e);
-    } finally {
-      setLoading(false);
-    }
-  }, [period]);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+      })
+      .catch((e) => {
+        console.error("Failed to fetch chart data:", e);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [period, refreshKey]);
 
   const cfg = VIEW_CONFIG[viewMode];
   const hasData = data.some((d) => (d[cfg.dataKey] || 0) > 0);
@@ -100,7 +102,7 @@ export default function UsageChart({ period = "7d" }) {
       ) : !hasData ? (
         <div className="h-48 flex items-center justify-center text-text-muted text-sm">No data for this period</div>
       ) : (
-        <ResponsiveContainer width="100%" height={220}>
+        <ResponsiveContainer width="100%" height={220} minWidth={0}>
           <AreaChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id="gradTokens" x1="0" y1="0" x2="0" y2="1">
@@ -148,6 +150,7 @@ export default function UsageChart({ period = "7d" }) {
               fill={`url(#${cfg.gradId})`}
               dot={false}
               activeDot={{ r: 4 }}
+              isAnimationActive={false}
             />
           </AreaChart>
         </ResponsiveContainer>
@@ -158,4 +161,5 @@ export default function UsageChart({ period = "7d" }) {
 
 UsageChart.propTypes = {
   period: PropTypes.string,
+  refreshKey: PropTypes.number,
 };

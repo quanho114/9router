@@ -66,7 +66,7 @@ export default function TopModelsChart({ byModel }) {
       {!chartData.length ? (
         <div className="h-44 flex items-center justify-center text-text-muted text-sm">No model usage yet</div>
       ) : (
-        <ResponsiveContainer width="100%" height={180}>
+        <ResponsiveContainer width="100%" height={180} minWidth={0}>
           <BarChart
             data={chartData}
             layout="vertical"
@@ -97,7 +97,7 @@ export default function TopModelsChart({ byModel }) {
               }}
               formatter={(value) => [fmt(value), label]}
             />
-            <Bar dataKey={viewMode} radius={[0, 4, 4, 0]}>
+            <Bar dataKey={viewMode} radius={[0, 4, 4, 0]} isAnimationActive={false}>
               {chartData.map((_, i) => (
                 <Cell key={i} fill={COLORS[i % COLORS.length]} fillOpacity={0.85} />
               ))}

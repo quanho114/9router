@@ -292,11 +292,6 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
         }
       }
 
-      if (isFreeTier) {
-        delete weeklyQuotas.argon_session;
-        delete weeklyQuotas.argon_weekly;
-      }
-
       Object.assign(quotas, weeklyQuotas);
     } catch {
       // Silently ignore — weekly is best-effort

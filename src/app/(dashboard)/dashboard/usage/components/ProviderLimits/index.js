@@ -360,7 +360,10 @@ export default function ProviderLimits() {
     if (abortControllerRef.current?.signal?.aborted) return;
     if (quotaInFlightRef.current.has(connectionId)) return;
     quotaInFlightRef.current.add(connectionId);
-    const hasExistingQuota = Boolean(quotaDataRef.current[connectionId]);
+    const hasExistingQuota = Boolean(
+      quotaDataRef.current[connectionId]?.quotas?.length ||
+      quotaDataRef.current[connectionId]?.message
+    );
     if (!silent && (!hasExistingQuota || force)) {
       setLoading((prev) => (prev[connectionId] ? prev : { ...prev, [connectionId]: true }));
     }
@@ -368,11 +371,17 @@ export default function ProviderLimits() {
       setErrors((prev) => (prev[connectionId] == null ? prev : { ...prev, [connectionId]: null }));
     }
 
+    const reqController = new AbortController();
+    const parentSignal = abortControllerRef.current?.signal;
+    const onParentAbort = () => reqController.abort();
+    parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+    const timeoutId = setTimeout(() => reqController.abort(), 15000);
+
     try {
       const url = `/api/usage/${connectionId}${force ? "?force=1" : ""}`;
       const response = await fetch(url, {
         cache: "no-store",
-        signal: abortControllerRef.current?.signal,
+        signal: reqController.signal,
       });
 
       if (!response.ok) {
@@ -417,8 +426,6 @@ export default function ProviderLimits() {
       const previousEntry = quotaDataRef.current[connectionId];
       const keepPreviousQuotas =
         parsedQuotas.length === 0 &&
-        data?.quotas == null &&
-        Boolean(data?.message) &&
         Array.isArray(previousEntry?.quotas) &&
         previousEntry.quotas.length > 0;
 
@@ -442,16 +449,22 @@ export default function ProviderLimits() {
         setQuotaCache(connectionId, quotaEntry);
       }
     } catch (error) {
-      if (error?.name === "AbortError") return;
+      if (parentSignal?.aborted) return;
+      const errMsg =
+        error?.name === "AbortError"
+          ? "Quota request timed out"
+          : error.message || "Failed to fetch quota";
       console.error(
         `[ProviderLimits] Error fetching quota for ${provider} (${connectionId}):`,
         error,
       );
       setErrors((prev) => ({
         ...prev,
-        [connectionId]: error.message || "Failed to fetch quota",
+        [connectionId]: errMsg,
       }));
     } finally {
+      clearTimeout(timeoutId);
+      parentSignal?.removeEventListener("abort", onParentAbort);
       quotaInFlightRef.current.delete(connectionId);
       if (!abortControllerRef.current?.signal?.aborted) {
         setLoading((prev) => (prev[connectionId] ? { ...prev, [connectionId]: false } : prev));
@@ -1413,7 +1426,7 @@ export default function ProviderLimits() {
               </div>
 
               <div className="px-3 py-1">
-                {isLoading && !quota ? (
+                {(isLoading || !quota) && !visibleQuotas.length && !error && !quota?.message ? (
                   <div className="py-2.5 space-y-2.5">
                     <div className="flex items-center gap-3">
                       <Skeleton className="h-3.5 w-32 shrink-0" />
@@ -1426,7 +1439,7 @@ export default function ProviderLimits() {
                       <Skeleton className="h-3.5 w-16 shrink-0" />
                     </div>
                   </div>
-                ) : error && !quota ? (
+                ) : error && !visibleQuotas.length ? (
                   <div className="text-center py-5">
                     <span className="material-symbols-outlined text-[28px] text-red-500">
                       error
@@ -1437,7 +1450,7 @@ export default function ProviderLimits() {
                   <div className="text-center py-5">
                     <p className="text-xs text-text-muted">{quota.message}</p>
                   </div>
-                ) : (
+                ) : visibleQuotas.length > 0 ? (
                   <QuotaTable
                     quotas={visibleQuotas}
                     compact
@@ -1447,7 +1460,11 @@ export default function ProviderLimits() {
                     }
                     onHideQuota={(quotaRow) => handleHideQuota(conn.provider, quotaRow)}
                   />
-                )}
+                ) : hiddenQuotaRows.length === 0 ? (
+                  <div className="text-center py-4">
+                    <p className="text-xs text-text-muted">No quota metrics reported</p>
+                  </div>
+                ) : null}
                 {error && quota && <p role="status" className="mt-2 text-xs text-amber-700 dark:text-amber-400">Update failed. Showing last available data.</p>}
                 {quota?.message && visibleQuotas.length > 0 && !error && (
                   <p className="mt-2 px-1 text-xs leading-relaxed text-text-muted">

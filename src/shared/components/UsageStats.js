@@ -231,8 +231,10 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const [providersLoaded, setProvidersLoaded] = useState(
     () => initialProviders !== null
   );
+  const [refreshSeq, setRefreshSeq] = useState(0);
   const hasLoadedStats = useRef(Boolean(initialStats));
   const liveStats = useRef(null);
+  const lastRecentSigRef = useRef("");
 
   // Fetch connected providers once, deduplicate by provider type
   // Always include noAuth free providers (e.g. opencode) regardless of connections
@@ -317,7 +319,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       }
     });
 
-    fetch(`/api/usage/stats?period=${period}`)
+    fetch(`/api/usage/stats?period=${period}`, { cache: "no-store" })
       .then((r) => r.ok ? r.json() : null)
       .then((data) => {
         if (cancelled || !data) return;
@@ -337,9 +339,9 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
     return () => {
       cancelled = true;
     };
-  }, [period]);
+  }, [period, refreshSeq]);
 
-  // SSE connection - real-time updates for activeRequests + recentRequests only
+  // SSE connection - real-time updates for activeRequests + recentRequests + trigger stats refresh on new completion
   useEffect(() => {
     const es = new EventSource("/api/usage/stream");
 
@@ -352,6 +354,16 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           errorProvider: data.errorProvider,
           pending: data.pending,
         };
+        const latest = data.recentRequests?.[0];
+        const sig = latest
+          ? `${latest.timestamp}:${latest.promptTokens}:${latest.completionTokens}:${data.recentRequests.length}`
+          : "";
+        if (sig) {
+          if (lastRecentSigRef.current && lastRecentSigRef.current !== sig) {
+            setRefreshSeq((n) => n + 1);
+          }
+          lastRecentSigRef.current = sig;
+        }
         // Always merge only real-time fields, never overwrite full stats from REST
         setStats((prev) => {
           if (!prev) return prev;
@@ -553,7 +565,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
       )}
 
       {/* Token / Cost chart - sync period */}
-      {loading || !stats ? blockSkeleton : <UsageChart period={period} />}
+      {loading || !stats ? blockSkeleton : <UsageChart period={period} refreshKey={refreshSeq} />}
       {!loading && stats && (stats.byProvider || stats.byModel) && (
         <div className="grid min-w-0 grid-cols-1 gap-2 lg:grid-cols-2">
           <ProviderBarChart byProvider={stats.byProvider} />

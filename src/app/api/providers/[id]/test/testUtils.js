@@ -1,4 +1,5 @@
 import { getProviderConnectionById, updateProviderConnection } from "@/lib/localDb";
+import { buildClearModelLocksUpdate } from "open-sse/services/accountFallback.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { testProxyUrl } from "@/lib/network/proxyTest";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS } from "@/shared/constants/providers";
@@ -1005,6 +1006,8 @@ export async function testSingleConnection(id) {
   // dashboard can show a warning without marking the connection broken.
   const softWarning = result.valid && (result.warning || result.error);
   const updateData = {
+    ...(result.valid ? buildClearModelLocksUpdate(connection) : {}),
+    ...(result.valid ? { backoffLevel: 0, errorCode: null } : {}),
     testStatus: result.valid ? "active" : "error",
     lastError: result.valid ? (softWarning || null) : result.error,
     lastErrorAt: result.valid

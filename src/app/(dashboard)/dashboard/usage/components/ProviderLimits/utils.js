@@ -199,7 +199,19 @@ export function getQuotaCache() {
   if (typeof window === "undefined") return {};
   try {
     const cached = window.localStorage.getItem(QUOTA_CACHE_KEY);
-    return cached ? JSON.parse(cached) : {};
+    if (!cached) return {};
+    const parsed = JSON.parse(cached);
+    if (!parsed || typeof parsed !== "object") return {};
+    const valid = {};
+    for (const [id, entry] of Object.entries(parsed)) {
+      if (
+        (Array.isArray(entry?.quotas) && entry.quotas.length > 0) ||
+        Boolean(entry?.message)
+      ) {
+        valid[id] = entry;
+      }
+    }
+    return valid;
   } catch (error) {
     console.error("Error reading quota cache:", error);
     return {};
@@ -208,6 +220,9 @@ export function getQuotaCache() {
 
 export function setQuotaCache(connectionId, quotaEntry) {
   if (typeof window === "undefined") return;
+  const hasQuotas = Array.isArray(quotaEntry?.quotas) && quotaEntry.quotas.length > 0;
+  const hasMessage = Boolean(quotaEntry?.message);
+  if (!hasQuotas && !hasMessage) return;
   try {
     const cache = getQuotaCache();
     cache[connectionId] = {

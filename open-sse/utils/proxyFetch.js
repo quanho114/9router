@@ -284,7 +284,30 @@ async function createBypassRequest(parsedUrl, realIP, options) {
   const net = netModule.default ?? netModule;
 
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      const abortErr = new Error(options.signal.reason?.message || "This operation was aborted");
+      abortErr.name = "AbortError";
+      reject(abortErr);
+      return;
+    }
+
     const socket = new net.Socket();
+    let req = null;
+    let settled = false;
+
+    const onAbort = () => {
+      const abortErr = new Error(options.signal?.reason?.message || "This operation was aborted");
+      abortErr.name = "AbortError";
+      try { req?.destroy(abortErr); } catch {}
+      try { socket.destroy(abortErr); } catch {}
+      if (!settled) {
+        settled = true;
+        reject(abortErr);
+      }
+    };
+
+    options.signal?.addEventListener("abort", onAbort, { once: true });
+    const cleanupAbort = () => options.signal?.removeEventListener("abort", onAbort);
 
     socket.connect(HTTPS_PORT, realIP, () => {
       const reqOptions = {
@@ -304,31 +327,64 @@ async function createBypassRequest(parsedUrl, realIP, options) {
         },
       };
 
-      const req = https.request(reqOptions, (res) => {
+      req = https.request(reqOptions, (res) => {
+        settled = true;
+        res.once("close", cleanupAbort);
+        let cachedTextPromise = null;
+        const readTextOnce = () => {
+          if (!cachedTextPromise) {
+            cachedTextPromise = (async () => {
+              const chunks = [];
+              for await (const chunk of res) chunks.push(chunk);
+              return Buffer.concat(chunks).toString();
+            })();
+          }
+          return cachedTextPromise;
+        };
+        let webBody = null;
         const response = {
           ok: res.statusCode >= HTTP_SUCCESS_MIN && res.statusCode < HTTP_SUCCESS_MAX,
           status: res.statusCode,
           statusText: res.statusMessage,
           headers: new Map(Object.entries(res.headers)),
-          body: Readable.toWeb(res),
-          text: async () => {
-            const chunks = [];
-            for await (const chunk of res) chunks.push(chunk);
-            return Buffer.concat(chunks).toString();
+          get body() {
+            if (!webBody) webBody = Readable.toWeb(res);
+            return webBody;
           },
-          json: async () => JSON.parse(await response.text()),
+          text: readTextOnce,
+          json: async () => JSON.parse(await readTextOnce()),
+          clone: () => ({
+            ok: response.ok,
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+            text: readTextOnce,
+            json: async () => JSON.parse(await readTextOnce()),
+          }),
         };
         resolve(response);
       });
 
-      req.on("error", reject);
+      req.on("error", (err) => {
+        cleanupAbort();
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+      });
       if (options.body) {
         req.write(typeof options.body === "string" ? options.body : JSON.stringify(options.body));
       }
       req.end();
     });
 
-    socket.on("error", reject);
+    socket.on("error", (err) => {
+      cleanupAbort();
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    });
   });
 }
 

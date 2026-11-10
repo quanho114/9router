@@ -63,7 +63,7 @@ export default function ProviderBarChart({ byProvider }) {
       {!chartData.length ? (
         <div className="h-44 flex items-center justify-center text-text-muted text-sm">No provider usage yet</div>
       ) : (
-        <ResponsiveContainer width="100%" height={180}>
+        <ResponsiveContainer width="100%" height={180} minWidth={0}>
           <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
             <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.1} vertical={false} />
             <XAxis
@@ -90,7 +90,7 @@ export default function ProviderBarChart({ byProvider }) {
               }}
               formatter={(value) => [fmt(value), label]}
             />
-            <Bar dataKey={viewMode} radius={[4, 4, 0, 0]}>
+            <Bar dataKey={viewMode} radius={[4, 4, 0, 0]} isAnimationActive={false}>
               {chartData.map((_, i) => (
                 <Cell key={i} fill={COLORS[i % COLORS.length]} fillOpacity={0.85} />
               ))}

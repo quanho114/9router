@@ -324,7 +324,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     }
 
     // When rotating to a fallback Antigravity account for an Argon model whose quota/tier
-    // is not yet cached, check quota upfront so free-tier accounts are skipped immediately.
+    // is not yet cached, check quota upfront so free-tier/exhausted accounts are skipped immediately.
     if (
       provider === "antigravity" &&
       (excludeConnectionIds.size > 0 || getAntigravityQuotaCache().size > 0) &&
@@ -337,7 +337,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         credentials.providerSpecificData
       );
       const quota = getAntigravityModelQuota(quotas, model);
-      if (quota && quota.remainingPercentage <= 0 && quota.resetAt && new Date(quota.resetAt).getTime() > Date.now()) {
+      if (quota && Math.round(quota.remainingPercentage) <= 0 && quota.resetAt && new Date(quota.resetAt).getTime() > Date.now()) {
         log.info("AG_QUOTA", `${credentials.connectionId.slice(0, 8)} | PREFLIGHT_SKIP ${model} — unsupported/exhausted on fallback account`);
         excludeConnectionIds.add(credentials.connectionId);
         continue;
@@ -409,6 +409,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         refreshedCredentials.accessToken, credentials.providerSpecificData
       );
       if (quotaResetMs) resetsAtMs = quotaResetMs;
+      else resetsAtMs = null;
     }
 
     // Exhausted Antigravity model is blocked only in RAM cache until upstream resetAt.
