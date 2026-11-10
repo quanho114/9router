@@ -7,6 +7,7 @@ import Drawer from "@/shared/components/Drawer";
 import Pagination from "@/shared/components/Pagination";
 import { cn } from "@/shared/utils/cn";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
+import { getInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 
 let providerNameCache = null;
 let providerNodesCache = null;
@@ -100,17 +101,22 @@ function getInputTokens(tokens) {
 }
 
 export default function RequestDetailsTab() {
-  const [details, setDetails] = useState([]);
-  const [pagination, setPagination] = useState({
-    page: 1,
-    pageSize: 20,
-    totalItems: 0,
-    totalPages: 0
-  });
-  const [loading, setLoading] = useState(false);
+  const initialCache = getInitialCache("requestDetails:1:20:::", null);
+  const [details, setDetails] = useState(() => initialCache?.details || []);
+  const [pagination, setPagination] = useState(() =>
+    initialCache?.pagination || {
+      page: 1,
+      pageSize: 20,
+      totalItems: 0,
+      totalPages: 0,
+    }
+  );
+  const [loading, setLoading] = useState(() => !initialCache);
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [providers, setProviders] = useState([]);
+  const [providers, setProviders] = useState(() =>
+    getInitialCache("usageDetailProviders", [])
+  );
   const [providerNameCache, setProviderNameCache] = useState(null);
   const [filters, setFilters] = useState({
     provider: "",
@@ -119,10 +125,16 @@ export default function RequestDetailsTab() {
   });
 
   const fetchProviders = useCallback(async () => {
+    runWithCache(() => {
+      const cachedProviders = readCache("usageDetailProviders", null);
+      if (cachedProviders) setProviders(cachedProviders);
+    });
     try {
       const res = await fetch("/api/usage/providers");
       const data = await res.json();
-      setProviders(data.providers || []);
+      const list = data.providers || [];
+      writeCache("usageDetailProviders", list);
+      setProviders(list);
 
       const cache = await fetchProviderNames();
       setProviderNameCache(cache.providerNameCache);
@@ -132,7 +144,19 @@ export default function RequestDetailsTab() {
   }, []);
 
   const fetchDetails = useCallback(async () => {
-    setLoading(true);
+    const cacheKey = `requestDetails:${pagination.page}:${pagination.pageSize}:${filters.provider}:${filters.startDate}:${filters.endDate}`;
+    runWithCache(() => {
+      const cached = readCache(cacheKey, null);
+      if (cached) {
+        setDetails(cached.details || []);
+        if (cached.pagination) {
+          setPagination((prev) => ({ ...prev, ...cached.pagination }));
+        }
+        setLoading(false);
+      } else if (details.length === 0) {
+        setLoading(true);
+      }
+    });
     try {
       const params = new URLSearchParams({
         page: pagination.page.toString(),
@@ -145,6 +169,7 @@ export default function RequestDetailsTab() {
       const res = await fetch(`/api/usage/request-details?${params}`);
       const data = await res.json();
 
+      writeCache(cacheKey, data);
       setDetails(data.details || []);
       setPagination(prev => ({ ...prev, ...data.pagination }));
     } catch (error) {
@@ -152,7 +177,7 @@ export default function RequestDetailsTab() {
     } finally {
       setLoading(false);
     }
-  }, [pagination.page, pagination.pageSize, filters]);
+  }, [pagination.page, pagination.pageSize, filters, details.length]);
 
   useEffect(() => {
     fetchProviders();

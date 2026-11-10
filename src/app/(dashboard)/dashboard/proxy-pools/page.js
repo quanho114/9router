@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { Badge, Button, Card, CardSkeleton, Input, Modal, Toggle, ConfirmModal } from "@/shared/components";
+import { getInitialCache, hasInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 import { useNotificationStore } from "@/store/notificationStore";
 
 function getStatusVariant(status) {
@@ -28,8 +29,12 @@ function normalizeFormData(data = {}) {
 }
 
 export default function ProxyPoolsPage() {
-  const [proxyPools, setProxyPools] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [proxyPools, setProxyPools] = useState(() =>
+    getInitialCache("proxyPools:all", [])
+  );
+  const [loading, setLoading] = useState(
+    () => !hasInitialCache("proxyPools:all")
+  );
   const [showFormModal, setShowFormModal] = useState(false);
   const [showBatchImportModal, setShowBatchImportModal] = useState(false);
   const [showVercelModal, setShowVercelModal] = useState(false);
@@ -69,11 +74,20 @@ export default function ProxyPoolsPage() {
   }, [showRelayMenu]);
 
   const fetchProxyPools = useCallback(async () => {
+    runWithCache(() => {
+      const cached = readCache("proxyPools:all", null);
+      if (cached !== null) {
+        setProxyPools(cached);
+        setLoading(false);
+      }
+    });
     try {
       const res = await fetch("/api/proxy-pools?includeUsage=true", { cache: "no-store" });
       const data = await res.json();
       if (res.ok) {
-        setProxyPools(data.proxyPools || []);
+        const list = data.proxyPools || [];
+        writeCache("proxyPools:all", list);
+        setProxyPools(list);
       }
     } catch (error) {
       console.log("Error fetching proxy pools:", error);

@@ -22,6 +22,7 @@ import {
 } from "@/shared/constants/providers";
 import Link from "next/link";
 import { getErrorCode, getRelativeTime } from "@/shared/utils";
+import { getInitialCache, hasInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
 import ModelAvailabilityBadge from "./components/ModelAvailabilityBadge";
@@ -98,9 +99,13 @@ function getConnectionErrorTag(connection) {
 const APIKEY_INITIAL_VISIBLE = 20;
 
 export default function ProvidersPage() {
-  const [connections, setConnections] = useState([]);
-  const [providerNodes, setProviderNodes] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [connections, setConnections] = useState(() =>
+    getInitialCache("providers", [])
+  );
+  const [providerNodes, setProviderNodes] = useState(() =>
+    getInitialCache("providerNodes", [])
+  );
+  const [loading, setLoading] = useState(() => !hasInitialCache("providers"));
   const [showAllApikey, setShowAllApikey] = useState(false);
   const [showAddCompatibleModal, setShowAddCompatibleModal] = useState(false);
   const [showAddAnthropicCompatibleModal, setShowAddAnthropicCompatibleModal] =
@@ -151,6 +156,15 @@ export default function ProvidersPage() {
     });
 
   useEffect(() => {
+    runWithCache(() => {
+      const cachedConns = readCache("providers", null);
+      const cachedNodes = readCache("providerNodes", null);
+      if (cachedConns !== null) {
+        setConnections(cachedConns);
+        if (cachedNodes !== null) setProviderNodes(cachedNodes);
+        setLoading(false);
+      }
+    });
     const fetchData = async () => {
       try {
         const [connectionsRes, nodesRes] = await Promise.all([
@@ -159,9 +173,16 @@ export default function ProvidersPage() {
         ]);
         const connectionsData = await connectionsRes.json();
         const nodesData = await nodesRes.json();
-        if (connectionsRes.ok)
-          setConnections(connectionsData.connections || []);
-        if (nodesRes.ok) setProviderNodes(nodesData.nodes || []);
+        if (connectionsRes.ok) {
+          const nextConns = connectionsData.connections || [];
+          writeCache("providers", nextConns);
+          setConnections(nextConns);
+        }
+        if (nodesRes.ok) {
+          const nextNodes = nodesData.nodes || [];
+          writeCache("providerNodes", nextNodes);
+          setProviderNodes(nextNodes);
+        }
       } catch (error) {
         console.log("Error fetching data:", error);
       } finally {
@@ -225,9 +246,11 @@ export default function ProvidersPage() {
     const matches = (c) =>
       c.provider === providerId && authTypes.includes(c.authType);
     const providerConns = connections.filter(matches);
-    setConnections((prev) =>
-      prev.map((c) => (matches(c) ? { ...c, isActive: newActive } : c)),
-    );
+    setConnections((prev) => {
+      const next = prev.map((c) => (matches(c) ? { ...c, isActive: newActive } : c));
+      writeCache("providers", next);
+      return next;
+    });
     await Promise.allSettled(
       providerConns.map((c) =>
         fetch(`/api/providers/${c.id}`, {

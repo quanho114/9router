@@ -28,6 +28,7 @@ import AutoPingScheduleModal from "./AutoPingScheduleModal";
 import WebLoginButton, { WEB_LOGIN_PROVIDERS } from "../components/WebLoginButton.js";
 import MinimaxLeaseButton from "../components/MinimaxLeaseButton.js";
 import { getScheduleSlotLabels } from "@/shared/services/quotaPingSchedule";
+import { getInitialCache, hasInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
 
@@ -49,10 +50,19 @@ export default function ProviderDetailPage() {
   const router = useRouter();
   const providerId = params.id;
   const { getCaps } = useModelCaps();
-  const [connections, setConnections] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [providerNode, setProviderNode] = useState(null);
-  const [proxyPools, setProxyPools] = useState([]);
+  const initialProviders = getInitialCache("providers", null);
+  const initialNodes = getInitialCache("providerNodes", null);
+  const initialSettings = getInitialCache("settings", null);
+  const [connections, setConnections] = useState(() =>
+    (initialProviders || []).filter((c) => c.provider === providerId)
+  );
+  const [loading, setLoading] = useState(() => !hasInitialCache("providers"));
+  const [providerNode, setProviderNode] = useState(() =>
+    (initialNodes || []).find((entry) => entry.id === providerId) || null
+  );
+  const [proxyPools, setProxyPools] = useState(() =>
+    getInitialCache("proxyPools:active", [])
+  );
   const [showOAuthModal, setShowOAuthModal] = useState(false);
   const [showXiaomiMimoModal, setShowXiaomiMimoModal] = useState(false);
   const [showIFlowCookieModal, setShowIFlowCookieModal] = useState(false);
@@ -64,8 +74,12 @@ export default function ProviderDetailPage() {
   const [showEditNodeModal, setShowEditNodeModal] = useState(false);
   const [showBulkProxyModal, setShowBulkProxyModal] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState(null);
-  const [modelAliases, setModelAliases] = useState({});
-  const [customModels, setCustomModels] = useState([]);
+  const [modelAliases, setModelAliases] = useState(() =>
+    getInitialCache("modelAliases", {})
+  );
+  const [customModels, setCustomModels] = useState(() =>
+    getInitialCache("customModels", [])
+  );
   const [headerImgError, setHeaderImgError] = useState(false);
   const [modelTestResults, setModelTestResults] = useState({});
   const [modelsTestError, setModelsTestError] = useState("");
@@ -74,17 +88,34 @@ export default function ProviderDetailPage() {
   const [selectedConnectionIds, setSelectedConnectionIds] = useState([]);
   const [bulkProxyPoolId, setBulkProxyPoolId] = useState("__none__");
   const [bulkUpdatingProxy, setBulkUpdatingProxy] = useState(false);
-  const [providerStrategy, setProviderStrategy] = useState(null);
-  const [providerStickyLimit, setProviderStickyLimit] = useState("");
-  const [thinkingMode, setThinkingMode] = useState("auto");
-  const [autoPing, setAutoPing] = useState({ enabled: false, connections: {}, schedules: {} });
+  const [providerStrategy, setProviderStrategy] = useState(
+    () => (initialSettings?.providerStrategies || {})[providerId]?.fallbackStrategy || null
+  );
+  const [providerStickyLimit, setProviderStickyLimit] = useState(() => {
+    const lim = (initialSettings?.providerStrategies || {})[providerId]?.stickyRoundRobinLimit;
+    return lim != null ? String(lim) : "1";
+  });
+  const [thinkingMode, setThinkingMode] = useState(
+    () => (initialSettings?.providerThinking || {})[providerId]?.mode || "auto"
+  );
+  const [autoPing, setAutoPing] = useState(() => {
+    const key = AUTO_PING_SETTINGS_KEYS[providerId];
+    const cfg = key ? initialSettings?.[key] || {} : {};
+    return {
+      enabled: cfg.enabled === true,
+      connections: cfg.connections || {},
+      schedules: cfg.schedules || {},
+    };
+  });
   const [scheduleConnection, setScheduleConnection] = useState(null);
   const [suggestedModels, setSuggestedModels] = useState([]);
   const [liveModels, setLiveModels] = useState([]);
   // Live-catalog fetch warning/error (surfaced for zed only; cursor behavior unchanged).
   const [liveModelsError, setLiveModelsError] = useState(null);
   const [kiloFreeModels, setKiloFreeModels] = useState([]);
-  const [disabledModelIds, setDisabledModelIds] = useState([]);
+  const [disabledModelIds, setDisabledModelIds] = useState(() =>
+    getInitialCache(`disabledModels:${providerId}`, [])
+  );
   const [confirmState, setConfirmState] = useState(null);
   const [showAgRiskModal, setShowAgRiskModal] = useState(false);
   const [oneByOneRunning, setOneByOneRunning] = useState(false);
@@ -219,11 +250,15 @@ export default function ProviderDetailPage() {
     try {
       const res = await fetch(`/api/models/disabled?providerAlias=${encodeURIComponent(providerStorageAlias)}`, { cache: "no-store" });
       const data = await res.json();
-      if (res.ok) setDisabledModelIds(data.ids || []);
+      if (res.ok) {
+        const ids = data.ids || [];
+        writeCache(`disabledModels:${providerId}`, ids);
+        setDisabledModelIds(ids);
+      }
     } catch (error) {
       console.log("Error fetching disabled models:", error);
     }
-  }, [providerStorageAlias]);
+  }, [providerStorageAlias, providerId]);
 
   const handleDisableModel = async (modelId) => {
     try {
@@ -283,7 +318,9 @@ export default function ProviderDetailPage() {
       const res = await fetch("/api/models/alias");
       const data = await res.json();
       if (res.ok) {
-        setModelAliases(data.aliases || {});
+        const aliases = data.aliases || {};
+        writeCache("modelAliases", aliases);
+        setModelAliases(aliases);
       }
     } catch (error) {
       console.log("Error fetching aliases:", error);
@@ -295,7 +332,9 @@ export default function ProviderDetailPage() {
       const res = await fetch("/api/models/custom", { cache: "no-store" });
       const data = await res.json();
       if (res.ok) {
-        setCustomModels(data.models || []);
+        const list = data.models || [];
+        writeCache("customModels", list);
+        setCustomModels(list);
       }
     } catch (error) {
       console.log("Error fetching custom models:", error);
@@ -312,6 +351,30 @@ export default function ProviderDetailPage() {
   }, [providerId]);
 
   const fetchConnections = useCallback(async () => {
+    runWithCache(() => {
+      const cachedConns = readCache("providers", null);
+      const cachedNodes = readCache("providerNodes", null);
+      const cachedPools = readCache("proxyPools:active", null);
+      const cachedSettings = readCache("settings", null);
+      if (cachedConns !== null) {
+        setConnections(cachedConns.filter((c) => c.provider === providerId));
+        if (cachedNodes !== null) {
+          setProviderNode(cachedNodes.find((entry) => entry.id === providerId) || null);
+        }
+        if (cachedPools !== null) setProxyPools(cachedPools);
+        if (cachedSettings !== null) {
+          const override = (cachedSettings.providerStrategies || {})[providerId] || {};
+          setProviderStrategy(override.fallbackStrategy || null);
+          setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
+          const thinkingCfg = (cachedSettings.providerThinking || {})[providerId] || {};
+          setThinkingMode(thinkingCfg.mode || "auto");
+          const autoPingSettingsKey = AUTO_PING_SETTINGS_KEYS[providerId];
+          const apCfg = autoPingSettingsKey ? cachedSettings[autoPingSettingsKey] || {} : {};
+          setAutoPing({ enabled: apCfg.enabled === true, connections: apCfg.connections || {}, schedules: apCfg.schedules || {} });
+        }
+        setLoading(false);
+      }
+    });
     try {
       const [connectionsRes, nodesRes, proxyPoolsRes, settingsRes] = await Promise.all([
         fetch("/api/providers", { cache: "no-store" }),
@@ -324,11 +387,18 @@ export default function ProviderDetailPage() {
       const proxyPoolsData = await proxyPoolsRes.json();
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
       if (connectionsRes.ok) {
-        const filtered = (connectionsData.connections || []).filter(c => c.provider === providerId);
+        const allConns = connectionsData.connections || [];
+        writeCache("providers", allConns);
+        const filtered = allConns.filter(c => c.provider === providerId);
         setConnections(filtered);
       }
       if (proxyPoolsRes.ok) {
-        setProxyPools(proxyPoolsData.proxyPools || []);
+        const pools = proxyPoolsData.proxyPools || [];
+        writeCache("proxyPools:active", pools);
+        setProxyPools(pools);
+      }
+      if (settingsRes.ok) {
+        writeCache("settings", settingsData);
       }
       // Load per-provider strategy override
       const override = (settingsData.providerStrategies || {})[providerId] || {};
@@ -341,7 +411,9 @@ export default function ProviderDetailPage() {
       const apCfg = autoPingSettingsKey ? settingsData[autoPingSettingsKey] || {} : {};
       setAutoPing({ enabled: apCfg.enabled === true, connections: apCfg.connections || {}, schedules: apCfg.schedules || {} });
       if (nodesRes.ok) {
-        let node = (nodesData.nodes || []).find((entry) => entry.id === providerId) || null;
+        const allNodes = nodesData.nodes || [];
+        writeCache("providerNodes", allNodes);
+        let node = allNodes.find((entry) => entry.id === providerId) || null;
 
         // Newly created compatible nodes can be briefly unavailable on one worker.
         // Retry a few times before showing "Provider not found".
@@ -351,7 +423,9 @@ export default function ProviderDetailPage() {
             const retryRes = await fetch("/api/provider-nodes", { cache: "no-store" });
             if (!retryRes.ok) continue;
             const retryData = await retryRes.json();
-            node = (retryData.nodes || []).find((entry) => entry.id === providerId) || null;
+            const retryNodes = retryData.nodes || [];
+            writeCache("providerNodes", retryNodes);
+            node = retryNodes.find((entry) => entry.id === providerId) || null;
             if (node) break;
           }
         }

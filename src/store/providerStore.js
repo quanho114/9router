@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { CLIENT_STORE_TTL_MS } from "@/shared/constants/config";
+import { writeCache } from "@/shared/utils/dashboardCache";
 
 const useProviderStore = create((set, get) => ({
   providers: [],
@@ -9,7 +10,10 @@ const useProviderStore = create((set, get) => ({
   error: null,
   lastFetched: 0,
 
-  setProviders: (providers) => set({ providers, lastFetched: Date.now() }),
+  setProviders: (providers) => {
+    writeCache("providers", providers);
+    set({ providers, lastFetched: Date.now() });
+  },
 
   addProvider: (provider) =>
     set((state) => ({ providers: [provider, ...state.providers] })),
@@ -41,7 +45,9 @@ const useProviderStore = create((set, get) => ({
       const response = await fetch("/api/providers");
       const data = await response.json();
       if (response.ok) {
-        set({ providers: data.connections || data.providers || [], loading: false, lastFetched: Date.now() });
+        const next = data.connections || data.providers || [];
+        writeCache("providers", next);
+        set({ providers: next, loading: false, lastFetched: Date.now() });
       } else {
         set({ error: data.error, loading: false });
       }

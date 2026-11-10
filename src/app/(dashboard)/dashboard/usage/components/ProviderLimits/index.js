@@ -45,6 +45,17 @@ import AutoPingScheduleModal from "@/app/(dashboard)/dashboard/providers/[id]/Au
 import { getScheduleSlotLabels } from "@/shared/services/quotaPingSchedule";
 import { USAGE_SUPPORTED_PROVIDERS, AI_PROVIDERS } from "@/shared/constants/providers";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import {
+  getInitialCache,
+  isDashboardHydrated,
+  readCache,
+  runWithCache,
+  writeCache,
+} from "@/shared/utils/dashboardCache";
+
+function getQuotaConnCacheKey(providerFilter, accountFilter, page, pageSize) {
+  return `quotaConnections:${providerFilter}:${accountFilter}:${page}:${pageSize}`;
+}
 
 // Maps the stored providerSpecificData.authMethod to a human label for Kiro.
 // Values come from the Kiro connect flows: builder-id/idc (device code),
@@ -162,23 +173,6 @@ export default function ProviderLimits() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
-  const [connections, setConnections] = useState([]);
-  const [quotaData, setQuotaData] = useState({});
-  const [loading, setLoading] = useState({});
-  const [errors, setErrors] = useState({});
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const [autoPingConfigs, setAutoPingConfigs] = useState({ claude: {}, codex: {}, antigravity: {}, "gemini-cli": {} });
-  const [scheduleConnection, setScheduleConnection] = useState(null);
-  const [lastUpdated, setLastUpdated] = useState(null);
-  const [hasHydratedAutoRefresh, setHasHydratedAutoRefresh] = useState(false);
-  const [connectionsLoading, setConnectionsLoading] = useState(true);
-  const [deletingId, setDeletingId] = useState(null);
-  const [resettingLimitId, setResettingLimitId] = useState(null);
-  const [resetConfirmState, setResetConfirmState] = useState(null);
-  const [resetCreditsState, setResetCreditsState] = useState(null);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [selectedConnection, setSelectedConnection] = useState(null);
-  const [proxyPools, setProxyPools] = useState([]);
   // Initialize providerFilter from URL ?provider= param so the page
   // can be bookmarked / deep-linked to a specific provider (#4217).
   const [providerFilter, _setProviderFilter] = useState(
@@ -199,10 +193,49 @@ export default function ProviderLimits() {
       router.replace(newUrl, { scroll: false });
     } catch { /* non-fatal: URL sync is best-effort */ }
   }, [pathname, router, searchParams]);
-  const [providerOptions, setProviderOptions] = useState([]);
+  const initialConnCache = getInitialCache(
+    getQuotaConnCacheKey(providerFilter, "all", 1, CONNECTIONS_PAGE_SIZE),
+    null
+  );
+  const initialSettingsCache = getInitialCache("settings", null);
+  const [connections, setConnections] = useState(
+    () => initialConnCache?.connections || []
+  );
+  const [quotaData, setQuotaData] = useState(() =>
+    isDashboardHydrated() ? getQuotaCache() : {}
+  );
+  const [loading, setLoading] = useState({});
+  const [errors, setErrors] = useState({});
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [autoPingConfigs, setAutoPingConfigs] = useState(() => ({
+    claude: initialSettingsCache?.claudeAutoPing || {},
+    codex: initialSettingsCache?.codexAutoPing || {},
+    antigravity: initialSettingsCache?.antigravityAutoPing || {},
+    "gemini-cli": initialSettingsCache?.geminiCliAutoPing || {},
+  }));
+  const [scheduleConnection, setScheduleConnection] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [hasHydratedAutoRefresh, setHasHydratedAutoRefresh] = useState(false);
+  const [connectionsLoading, setConnectionsLoading] = useState(
+    () => !initialConnCache
+  );
+  const [deletingId, setDeletingId] = useState(null);
+  const [resettingLimitId, setResettingLimitId] = useState(null);
+  const [resetConfirmState, setResetConfirmState] = useState(null);
+  const [resetCreditsState, setResetCreditsState] = useState(null);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [selectedConnection, setSelectedConnection] = useState(null);
+  const [proxyPools, setProxyPools] = useState(() =>
+    getInitialCache("proxyPools:active", [])
+  );
+  const [providerOptions, setProviderOptions] = useState(() =>
+    getProviderOptions(initialConnCache?.providerOptions)
+  );
   const [accountFilter, setAccountFilter] = useState("all");
   const [quotaSortMode, setQuotaSortMode] = useState("default");
-  const [quotaVisibility, setQuotaVisibility] = useState({});
+  const [quotaVisibility, setQuotaVisibility] = useState(
+    () => initialSettingsCache?.quotaVisibility || {}
+  );
   const [expiringFirst, setExpiringFirst] = useState(false);
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
   const [bulkToggling, setBulkToggling] = useState(false);
@@ -211,16 +244,15 @@ export default function ProviderLimits() {
   const [customPageSizeInput, setCustomPageSizeInput] = useState(
     String(CONNECTIONS_PAGE_SIZE),
   );
-  const [pagination, setPagination] = useState({
-    page: 1,
-    pageSize: CONNECTIONS_PAGE_SIZE,
-    total: 0,
-    totalPages: 1,
-  });
-  const [totals, setTotals] = useState({
-    eligibleConnections: 0,
-    providerFilteredConnections: 0,
-  });
+  const [pagination, setPagination] = useState(() =>
+    getSafePagination(initialConnCache?.pagination, CONNECTIONS_PAGE_SIZE)
+  );
+  const [totals, setTotals] = useState(() =>
+    getSafeTotals(
+      initialConnCache?.totals,
+      initialConnCache?.connections?.length || 0
+    )
+  );
 
   const intervalRef = useRef(null);
   const refreshInFlightRef = useRef(false);
@@ -233,12 +265,39 @@ export default function ProviderLimits() {
   quotaDataRef.current = quotaData;
 
   useEffect(() => {
-    const cached = getQuotaCache();
-    if (cached && Object.keys(cached).length > 0) {
-      quotaDataRef.current = cached;
-      setQuotaData((prev) => ({ ...cached, ...prev }));
-    }
-  }, []);
+    runWithCache(() => {
+      const cached = getQuotaCache();
+      if (cached && Object.keys(cached).length > 0) {
+        quotaDataRef.current = { ...cached, ...quotaDataRef.current };
+        setQuotaData((prev) => ({ ...cached, ...prev }));
+      }
+      const cachedConns = readCache(
+        getQuotaConnCacheKey(providerFilter, accountFilter, page, pageSize),
+        null
+      );
+      if (cachedConns && connectionsRef.current.length === 0) {
+        const list = cachedConns.connections || [];
+        connectionsRef.current = list;
+        setConnections(list);
+        setProviderOptions(getProviderOptions(cachedConns.providerOptions));
+        setPagination(getSafePagination(cachedConns.pagination, pageSize));
+        setTotals(getSafeTotals(cachedConns.totals, list.length));
+        setConnectionsLoading(false);
+      }
+      const cachedSettings = readCache("settings", null);
+      if (cachedSettings) {
+        setAutoPingConfigs({
+          claude: cachedSettings?.claudeAutoPing || {},
+          codex: cachedSettings?.codexAutoPing || {},
+          antigravity: cachedSettings?.antigravityAutoPing || {},
+          "gemini-cli": cachedSettings?.geminiCliAutoPing || {},
+        });
+        setQuotaVisibility(cachedSettings?.quotaVisibility || {});
+      }
+      const cachedPools = readCache("proxyPools:active", null);
+      if (cachedPools) setProxyPools(cachedPools);
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const controller = new AbortController();
@@ -273,6 +332,10 @@ export default function ProviderLimits() {
         if (reqId !== connectionsReqIdRef.current) {
           return connectionsRef.current;
         }
+        writeCache(
+          getQuotaConnCacheKey(providerFilter, accountFilter, targetPage, pageSize),
+          data
+        );
         const connectionList = data.connections || [];
         const nextPagination = getSafePagination(data.pagination, pageSize);
         const nextTotals = getSafeTotals(data.totals, connectionList.length);
@@ -585,6 +648,7 @@ export default function ProviderLimits() {
       .then((res) => res.json())
       .then((data) => {
         if (!cancelled && data?.proxyPools) {
+          writeCache("proxyPools:active", data.proxyPools);
           setProxyPools(data.proxyPools);
         }
       })
@@ -606,7 +670,7 @@ export default function ProviderLimits() {
         filterQuotaStateByConnections(prev, visibleConnections),
       );
 
-      await fetchQuotasBounded(visibleConnections, 3, { silent: true });
+      await fetchQuotasBounded(visibleConnections, 6, { silent: true });
 
       if (!abortControllerRef.current?.signal?.aborted) {
         setLastUpdated(new Date());
@@ -624,7 +688,18 @@ export default function ProviderLimits() {
     const initializeData = async () => {
       refreshInFlightRef.current = true;
       try {
-        if (connectionsRef.current.length === 0) {
+        const cachedSnapshot = readCache(
+          getQuotaConnCacheKey(providerFilter, accountFilter, page, pageSize),
+          null
+        );
+        if (cachedSnapshot?.connections?.length > 0 && connectionsRef.current.length === 0) {
+          connectionsRef.current = cachedSnapshot.connections;
+          setConnections(cachedSnapshot.connections);
+          setProviderOptions(getProviderOptions(cachedSnapshot.providerOptions));
+          setPagination(getSafePagination(cachedSnapshot.pagination, pageSize));
+          setTotals(getSafeTotals(cachedSnapshot.totals, cachedSnapshot.connections.length));
+          setConnectionsLoading(false);
+        } else if (connectionsRef.current.length === 0) {
           setConnectionsLoading(true);
         }
         const visibleConnections = await fetchConnections(page);
@@ -644,7 +719,7 @@ export default function ProviderLimits() {
           filterQuotaStateByConnections(prev, visibleConnections),
         );
 
-        await fetchQuotasBounded(visibleConnections, 3, { silent: true });
+        await fetchQuotasBounded(visibleConnections, 6, { silent: true });
         if (!abortControllerRef.current?.signal?.aborted) {
           setLastUpdated(new Date());
         }
@@ -654,7 +729,7 @@ export default function ProviderLimits() {
     };
 
     initializeData();
-  }, [fetchConnections, fetchQuotasBounded, page]);
+  }, [fetchConnections, fetchQuotasBounded, page, providerFilter, accountFilter, pageSize]);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const stored = window.localStorage.getItem(AUTO_REFRESH_STORAGE_KEY);
@@ -671,8 +746,10 @@ export default function ProviderLimits() {
   // Load auto-ping per-connection configs
   useEffect(() => {
     fetch("/api/settings", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : {}))
+      .then((r) => (r.ok ? r.json() : null))
       .then((s) => {
+        if (!s) return;
+        writeCache("settings", s);
         setAutoPingConfigs({
           claude: s?.claudeAutoPing || {},
           codex: s?.codexAutoPing || {},

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { getStatusVariant as getConnectionStatusVariant } from "@/shared/utils/connectionStatus";
 import PropTypes from "prop-types";
 import { Card, Badge, Button, Modal, Select, Toggle, EditConnectionModal, ConfirmModal } from "@/shared/components";
+import { getInitialCache, hasInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 import WebLoginButton from "./WebLoginButton";
 
 // ── CooldownTimer ──────────────────────────────────────────────
@@ -297,17 +298,43 @@ AddApiKeyModal.propTypes = {
 // ── ConnectionsCard ────────────────────────────────────────────
 // Self-contained card: fetches, displays and manages all connections for a provider.
 export default function ConnectionsCard({ providerId, isOAuth, loginProviderId = null }) {
-  const [connections, setConnections] = useState([]);
-  const [proxyPools, setProxyPools] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const initialProviders = getInitialCache("providers", null);
+  const initialSettings = getInitialCache("settings", null);
+  const [connections, setConnections] = useState(() =>
+    (initialProviders || []).filter((c) => c.provider === providerId)
+  );
+  const [proxyPools, setProxyPools] = useState(() =>
+    getInitialCache("proxyPools:active", [])
+  );
+  const [loading, setLoading] = useState(() => !hasInitialCache("providers"));
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState(null);
-  const [providerStrategy, setProviderStrategy] = useState(null);
-  const [providerStickyLimit, setProviderStickyLimit] = useState("1");
+  const [providerStrategy, setProviderStrategy] = useState(
+    () => (initialSettings?.providerStrategies || {})[providerId]?.fallbackStrategy || null
+  );
+  const [providerStickyLimit, setProviderStickyLimit] = useState(() => {
+    const lim = (initialSettings?.providerStrategies || {})[providerId]?.stickyRoundRobinLimit;
+    return lim != null ? String(lim) : "1";
+  });
   const [confirmState, setConfirmState] = useState(null);
 
   const fetch_ = useCallback(async () => {
+    runWithCache(() => {
+      const cachedConns = readCache("providers", null);
+      const cachedPools = readCache("proxyPools:active", null);
+      const cachedSettings = readCache("settings", null);
+      if (cachedConns !== null) {
+        setConnections(cachedConns.filter((c) => c.provider === providerId));
+        if (cachedPools !== null) setProxyPools(cachedPools);
+        if (cachedSettings !== null) {
+          const override = (cachedSettings.providerStrategies || {})[providerId] || {};
+          setProviderStrategy(override.fallbackStrategy || null);
+          setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
+        }
+        setLoading(false);
+      }
+    });
     try {
       const [connRes, proxyRes, settingsRes] = await Promise.all([
         fetch("/api/providers", { cache: "no-store" }),
@@ -317,8 +344,19 @@ export default function ConnectionsCard({ providerId, isOAuth, loginProviderId =
       const connData = await connRes.json();
       const proxyData = await proxyRes.json();
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
-      if (connRes.ok) setConnections((connData.connections || []).filter((c) => c.provider === providerId));
-      if (proxyRes.ok) setProxyPools(proxyData.proxyPools || []);
+      if (connRes.ok) {
+        const allConns = connData.connections || [];
+        writeCache("providers", allConns);
+        setConnections(allConns.filter((c) => c.provider === providerId));
+      }
+      if (proxyRes.ok) {
+        const pools = proxyData.proxyPools || [];
+        writeCache("proxyPools:active", pools);
+        setProxyPools(pools);
+      }
+      if (settingsRes.ok) {
+        writeCache("settings", settingsData);
+      }
       const override = (settingsData.providerStrategies || {})[providerId] || {};
       setProviderStrategy(override.fallbackStrategy || null);
       setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");

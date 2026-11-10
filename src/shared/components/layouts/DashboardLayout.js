@@ -1,11 +1,33 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useNotificationStore } from "@/store/notificationStore";
+import { markDashboardHydrated, readCache, writeCache } from "@/shared/utils/dashboardCache";
 import Sidebar from "../Sidebar";
 import Header from "../Header";
 import { DashboardPageSkeleton } from "../Loading";
+
+const PREFETCH_ROUTES = [
+  "/dashboard/endpoint",
+  "/dashboard/providers",
+  "/dashboard/combos",
+  "/dashboard/usage",
+  "/dashboard/quota",
+  "/dashboard/token-saver",
+  "/dashboard/cli-tools",
+  "/dashboard/proxy-pools",
+  "/dashboard/skills",
+  "/dashboard/console-log",
+  "/dashboard/profile",
+  "/dashboard/media-providers/embedding",
+  "/dashboard/media-providers/image",
+  "/dashboard/media-providers/video",
+  "/dashboard/media-providers/tts",
+  "/dashboard/media-providers/stt",
+  "/dashboard/media-providers/systemone",
+  "/dashboard/media-providers/web",
+];
 function getToastStyle(type) {
   if (type === "success") {
     return {
@@ -42,14 +64,20 @@ function getToastStyle(type) {
 export default function DashboardLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
+  const router = useRouter();
   const [pendingNav, setPendingNav] = useState(null);
   const notifications = useNotificationStore((state) => state.notifications);
   const removeNotification = useNotificationStore((state) => state.removeNotification);
+
+  useEffect(() => {
+    markDashboardHydrated();
+  }, []);
 
   // Active optimistic navigation only while `pathname` is still at the route where click happened
   const isNavigating = Boolean(
     pendingNav && pendingNav.from === pathname && pendingNav.target !== pathname
   );
+  const showNavSkeleton = isNavigating && Boolean(pendingNav?.showSkeleton);
   const effectivePathname = isNavigating ? pendingNav.target : pathname;
 
   // Clear pending state as soon as Next.js commits the route transition
@@ -57,12 +85,18 @@ export default function DashboardLayout({ children }) {
     setPendingNav(null);
   }, [pathname]);
 
-  // Safety fallback in case navigation is cancelled or intercepted
+  // Defer navigation skeleton briefly so prefetched routes render in 0ms without skeleton flash
   useEffect(() => {
     if (!isNavigating) return;
-    const timer = setTimeout(() => setPendingNav(null), 5000);
-    return () => clearTimeout(timer);
-  }, [isNavigating, pendingNav]);
+    const skeletonTimer = setTimeout(() => {
+      setPendingNav((prev) => (prev ? { ...prev, showSkeleton: true } : null));
+    }, 200);
+    const resetTimer = setTimeout(() => setPendingNav(null), 5000);
+    return () => {
+      clearTimeout(skeletonTimer);
+      clearTimeout(resetTimer);
+    };
+  }, [isNavigating]);
 
   const handleNavigate = useCallback(
     (targetHref) => {
@@ -80,23 +114,49 @@ export default function DashboardLayout({ children }) {
     [pathname]
   );
 
-  // Preload heavy usage charts in background when browser is idle
+  // Preload heavy usage charts, prefetch routes, and pre-warm SWR cache when browser is idle
   useEffect(() => {
     const preload = () => {
+      for (const route of PREFETCH_ROUTES) {
+        try {
+          router.prefetch(route);
+        } catch {}
+      }
       import("@/shared/components/UsageStats").catch(() => {});
       import("@/app/(dashboard)/dashboard/usage/components/UsageChart").catch(() => {});
       import("@/app/(dashboard)/dashboard/usage/components/ProviderBarChart").catch(() => {});
       import("@/app/(dashboard)/dashboard/usage/components/TopModelsChart").catch(() => {});
+
+      const warmIfEmpty = (cacheKey, url, transform) => {
+        if (readCache(cacheKey, null) !== null) return;
+        fetch(url)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            if (data) writeCache(cacheKey, transform ? transform(data) : data);
+          })
+          .catch(() => {});
+      };
+
+      warmIfEmpty("providers", "/api/providers", (d) => d.connections || []);
+      warmIfEmpty("providerNodes", "/api/provider-nodes", (d) => d.nodes || []);
+      warmIfEmpty("settings", "/api/settings");
+      warmIfEmpty("combos", "/api/combos", (d) => d.combos || []);
+      warmIfEmpty("keys", "/api/keys", (d) => d.keys || []);
+      warmIfEmpty("usageStats:today", "/api/usage/stats?period=today");
+      warmIfEmpty(
+        "quotaConnections:all:all:1:20",
+        "/api/providers/client?page=1&pageSize=20&accountStatus=all&sort=priority"
+      );
     };
     if (typeof window !== "undefined") {
       if ("requestIdleCallback" in window) {
-        const id = window.requestIdleCallback(preload, { timeout: 4000 });
+        const id = window.requestIdleCallback(preload, { timeout: 2000 });
         return () => window.cancelIdleCallback(id);
       }
-      const timer = setTimeout(preload, 2500);
+      const timer = setTimeout(preload, 1000);
       return () => clearTimeout(timer);
     }
-  }, []);
+  }, [router]);
 
   return (
     <div className="relative flex h-screen w-full overflow-hidden bg-bg isolate">
@@ -165,8 +225,8 @@ export default function DashboardLayout({ children }) {
         <Header activePathname={effectivePathname} onMenuClick={() => setSidebarOpen(true)} />
         <div className={`flex-1 overflow-y-auto custom-scrollbar ${effectivePathname === "/dashboard/basic-chat" ? "" : "p-5 lg:p-9"} ${effectivePathname === "/dashboard/basic-chat" ? "flex flex-col overflow-hidden" : ""}`}>
           <div className={`${effectivePathname === "/dashboard/basic-chat" ? "flex-1 w-full h-full flex flex-col" : "max-w-7xl mx-auto"}`}>
-            {isNavigating && <DashboardPageSkeleton pathname={effectivePathname} />}
-            <div className={isNavigating ? "hidden" : "contents"}>
+            {showNavSkeleton && <DashboardPageSkeleton pathname={effectivePathname} />}
+            <div className={showNavSkeleton ? "hidden" : "contents"}>
               {children}
             </div>
           </div>

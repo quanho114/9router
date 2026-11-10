@@ -2,6 +2,7 @@
 
 import { create } from "zustand";
 import { CLIENT_STORE_TTL_MS } from "@/shared/constants/config";
+import { readCache, writeCache } from "@/shared/utils/dashboardCache";
 
 let inFlightSettingsPromise = null;
 
@@ -19,12 +20,18 @@ const useSettingsStore = create((set, get) => ({
     if (!force && settings && Date.now() - lastFetched < CLIENT_STORE_TTL_MS) return settings;
     if (inFlightSettingsPromise) return inFlightSettingsPromise;
 
+    const cached = !settings ? readCache("settings", null) : null;
+    if (cached && !settings) {
+      set({ settings: cached });
+    }
+
     set({ loading: true, error: null });
     inFlightSettingsPromise = (async () => {
       try {
         const res = await fetch("/api/settings");
         const data = await res.json();
         if (res.ok) {
+          writeCache("settings", data);
           set({ settings: data, loading: false, lastFetched: Date.now() });
           return data;
         }
@@ -34,7 +41,7 @@ const useSettingsStore = create((set, get) => ({
       } finally {
         inFlightSettingsPromise = null;
       }
-      return null;
+      return get().settings;
     })();
     return inFlightSettingsPromise;
   },
@@ -50,7 +57,9 @@ const useSettingsStore = create((set, get) => ({
       if (!res.ok) return null;
       const updated = await res.json();
       // Merge, not replace: PATCH response omits GET-only fields (e.g. hasPassword)
-      set({ settings: { ...get().settings, ...updated }, lastFetched: Date.now() });
+      const merged = { ...get().settings, ...updated };
+      writeCache("settings", merged);
+      set({ settings: merged, lastFetched: Date.now() });
       return updated;
     } catch {
       return null;

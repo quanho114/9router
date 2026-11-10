@@ -9,6 +9,7 @@ import { cn } from "@/shared/utils/cn";
 import { APP_CONFIG } from "@/shared/constants/config";
 import { LOCALE_COOKIE, normalizeLocale } from "@/i18n/config";
 import { LOCALE_FLAGS } from "@/shared/constants/locales";
+import { getInitialCache, hasInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 
 function getLocaleFromCookie() {
   if (typeof document === "undefined") return "en";
@@ -21,12 +22,15 @@ function getLocaleFromCookie() {
 
 export default function ProfilePage() {
   const { theme, setTheme, isDark } = useTheme();
+  const initialSettings = getInitialCache("settings", null);
   const [locale, setLocale] = useState(() => getLocaleFromCookie());
   const [langOpen, setLangOpen] = useState(false);
   const [shutdownOpen, setShutdownOpen] = useState(false);
   const [isShuttingDown, setIsShuttingDown] = useState(false);
-  const [settings, setSettings] = useState({ fallbackStrategy: "fill-first" });
-  const [loading, setLoading] = useState(true);
+  const [settings, setSettings] = useState(
+    () => initialSettings || { fallbackStrategy: "fill-first" }
+  );
+  const [loading, setLoading] = useState(() => !hasInitialCache("settings"));
   const [passwords, setPasswords] = useState({ current: "", new: "", confirm: "" });
   const [passStatus, setPassStatus] = useState({ type: "", message: "" });
   const [passLoading, setPassLoading] = useState(false);
@@ -34,35 +38,37 @@ export default function ProfilePage() {
   const [dbStatus, setDbStatus] = useState({ type: "", message: "" });
   const [dbAuth, setDbAuth] = useState({ open: false, mode: "", password: "" });
   const pendingImportRef = useRef(null);
-  const [oidcForm, setOidcForm] = useState({
-    authMode: "password",
-    oidcIssuerUrl: "",
-    oidcClientId: "",
-    oidcScopes: "openid profile email",
-    oidcLoginLabel: "Sign in with OIDC",
-  });
+  const [oidcForm, setOidcForm] = useState(() => ({
+    authMode: initialSettings?.authMode || "password",
+    oidcIssuerUrl: initialSettings?.oidcIssuerUrl || "",
+    oidcClientId: initialSettings?.oidcClientId || "",
+    oidcScopes: initialSettings?.oidcScopes || "openid profile email",
+    oidcLoginLabel: initialSettings?.oidcLoginLabel || "Sign in with OIDC",
+  }));
   const [oidcClientSecret, setOidcClientSecret] = useState("");
   const [oidcStatus, setOidcStatus] = useState({ type: "", message: "" });
   const [oidcLoading, setOidcLoading] = useState(false);
   const [oidcTestLoading, setOidcTestLoading] = useState(false);
   const [oidcTestStatus, setOidcTestStatus] = useState({ type: "", message: "" });
-  const [oidcExpanded, setOidcExpanded] = useState(false);
+  const [oidcExpanded, setOidcExpanded] = useState(() =>
+    ["sso", "saml", "oidc", "both"].includes(initialSettings?.authMode)
+  );
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const oidcRedirectUri = origin ? `${origin}/api/auth/oidc/callback` : "/api/auth/oidc/callback";
   const samlAcsUrl = origin ? `${origin}/api/auth/saml/acs` : "/api/auth/saml/acs";
   const samlMetadataUrl = origin ? `${origin}/api/auth/saml/metadata` : "/api/auth/saml/metadata";
-  
+
   // SAML State
-  const [ssoTypeTab, setSsoTypeTab] = useState("saml");
-  const [samlForm, setSamlForm] = useState({
-    samlEntryPoint: "",
-    samlIssuer: "urn:9router:sp",
-    samlCert: "",
-    samlLoginLabel: "Sign in with SAML SSO",
-    samlAttributeEmail: "email",
-    samlAttributeName: "name",
-  });
+  const [ssoTypeTab, setSsoTypeTab] = useState(() => initialSettings?.ssoType || "saml");
+  const [samlForm, setSamlForm] = useState(() => ({
+    samlEntryPoint: initialSettings?.samlEntryPoint || "",
+    samlIssuer: initialSettings?.samlIssuer || "urn:9router:sp",
+    samlCert: initialSettings?.samlCert || "",
+    samlLoginLabel: initialSettings?.samlLoginLabel || "Sign in with SAML SSO",
+    samlAttributeEmail: initialSettings?.samlAttributeEmail || "email",
+    samlAttributeName: initialSettings?.samlAttributeName || "name",
+  }));
   const [samlStatus, setSamlStatus] = useState({ type: "", message: "" });
   const [samlLoading, setSamlLoading] = useState(false);
   const [samlTestLoading, setSamlTestLoading] = useState(false);
@@ -72,11 +78,11 @@ export default function ProfilePage() {
   const certFileRef = useRef(null);
 
   const importFileRef = useRef(null);
-  const [proxyForm, setProxyForm] = useState({
-    outboundProxyEnabled: false,
-    outboundProxyUrl: "",
-    outboundNoProxy: "",
-  });
+  const [proxyForm, setProxyForm] = useState(() => ({
+    outboundProxyEnabled: initialSettings?.outboundProxyEnabled === true,
+    outboundProxyUrl: initialSettings?.outboundProxyUrl || "",
+    outboundNoProxy: initialSettings?.outboundNoProxy || "",
+  }));
   const [proxyStatus, setProxyStatus] = useState({ type: "", message: "" });
   const [proxyLoading, setProxyLoading] = useState(false);
   const [proxyTestLoading, setProxyTestLoading] = useState(false);
@@ -88,40 +94,52 @@ export default function ProfilePage() {
   }, []);
 
   useEffect(() => {
+    const applySettingsData = (data) => {
+      if (!data) return;
+      setSettings(data);
+      setOidcForm({
+        authMode: data?.authMode || "password",
+        oidcIssuerUrl: data?.oidcIssuerUrl || "",
+        oidcClientId: data?.oidcClientId || "",
+        oidcScopes: data?.oidcScopes || "openid profile email",
+        oidcLoginLabel: data?.oidcLoginLabel || "Sign in with OIDC",
+      });
+      setOidcClientSecret("");
+      setSsoTypeTab(data?.ssoType || "saml");
+      setSamlForm({
+        samlEntryPoint: data?.samlEntryPoint || "",
+        samlIssuer: data?.samlIssuer || "urn:9router:sp",
+        samlCert: data?.samlCert || "",
+        samlLoginLabel: data?.samlLoginLabel || "Sign in with SAML SSO",
+        samlAttributeEmail: data?.samlAttributeEmail || "email",
+        samlAttributeName: data?.samlAttributeName || "name",
+      });
+      if (
+        data?.authMode === "sso" ||
+        data?.authMode === "saml" ||
+        data?.authMode === "oidc" ||
+        data?.authMode === "both"
+      ) {
+        setOidcExpanded(true);
+      }
+      setProxyForm({
+        outboundProxyEnabled: data?.outboundProxyEnabled === true,
+        outboundProxyUrl: data?.outboundProxyUrl || "",
+        outboundNoProxy: data?.outboundNoProxy || "",
+      });
+    };
+    runWithCache(() => {
+      const cached = readCache("settings", null);
+      if (cached) {
+        applySettingsData(cached);
+        setLoading(false);
+      }
+    });
     fetch("/api/settings")
       .then((res) => res.json())
       .then((data) => {
-        setSettings(data);
-        setOidcForm({
-          authMode: data?.authMode || "password",
-          oidcIssuerUrl: data?.oidcIssuerUrl || "",
-          oidcClientId: data?.oidcClientId || "",
-          oidcScopes: data?.oidcScopes || "openid profile email",
-          oidcLoginLabel: data?.oidcLoginLabel || "Sign in with OIDC",
-        });
-        setOidcClientSecret("");
-        setSsoTypeTab(data?.ssoType || "saml");
-        setSamlForm({
-          samlEntryPoint: data?.samlEntryPoint || "",
-          samlIssuer: data?.samlIssuer || "urn:9router:sp",
-          samlCert: data?.samlCert || "",
-          samlLoginLabel: data?.samlLoginLabel || "Sign in with SAML SSO",
-          samlAttributeEmail: data?.samlAttributeEmail || "email",
-          samlAttributeName: data?.samlAttributeName || "name",
-        });
-        if (
-          data?.authMode === "sso" ||
-          data?.authMode === "saml" ||
-          data?.authMode === "oidc" ||
-          data?.authMode === "both"
-        ) {
-          setOidcExpanded(true);
-        }
-        setProxyForm({
-          outboundProxyEnabled: data?.outboundProxyEnabled === true,
-          outboundProxyUrl: data?.outboundProxyUrl || "",
-          outboundNoProxy: data?.outboundNoProxy || "",
-        });
+        writeCache("settings", data);
+        applySettingsData(data);
         setLoading(false);
       })
       .catch((err) => {

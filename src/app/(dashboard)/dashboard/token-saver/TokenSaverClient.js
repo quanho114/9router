@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Card, CardSkeleton, Button, Input, Modal, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { getInitialCache, hasInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 import { getCurrentLocale, onLocaleChange } from "@/i18n/runtime";
 import {
   WENYAN_LOCALES,
@@ -11,11 +12,24 @@ import {
 } from "../endpoint/endpointConstants";
 
 export default function TokenSaverClient() {
-  const [settingsLoading, setSettingsLoading] = useState(true);
-  const [rtkEnabled, setRtkEnabledState] = useState(true);
-  const [headroomEnabled, setHeadroomEnabled] = useState(false);
-  const [headroomUrl, setHeadroomUrl] = useState("http://localhost:8787");
-  const [headroomTimeoutMs, setHeadroomTimeoutMs] = useState(3000);
+  const initialSettings = getInitialCache("settings", null);
+  const [settingsLoading, setSettingsLoading] = useState(
+    () => !hasInitialCache("settings")
+  );
+  const [rtkEnabled, setRtkEnabledState] = useState(
+    () => initialSettings?.rtkEnabled !== false
+  );
+  const [headroomEnabled, setHeadroomEnabled] = useState(
+    () => !!initialSettings?.headroomEnabled
+  );
+  const [headroomUrl, setHeadroomUrl] = useState(
+    () => initialSettings?.headroomUrl || "http://localhost:8787"
+  );
+  const [headroomTimeoutMs, setHeadroomTimeoutMs] = useState(() =>
+    typeof initialSettings?.headroomTimeoutMs === "number"
+      ? initialSettings.headroomTimeoutMs
+      : 3000
+  );
   const [headroomStatus, setHeadroomStatus] = useState({
     installed: false,
     running: false,
@@ -38,18 +52,40 @@ export default function TokenSaverClient() {
   const [removingExtra, setRemovingExtra] = useState(null);
   const [installLog, setInstallLog] = useState("");
   const [extrasConfirm, setExtrasConfirm] = useState(null);
-  const [codeAware, setCodeAware] = useState(false);
-  const [kompress, setKompress] = useState(true);
+  const [codeAware, setCodeAware] = useState(
+    () => initialSettings?.headroomCodeAware === true
+  );
+  const [kompress, setKompress] = useState(
+    () => initialSettings?.headroomKompress !== false
+  );
   const [restartingProxy, setRestartingProxy] = useState(false);
   const logPollRef = useRef(null);
-  const [cavemanEnabled, setCavemanEnabled] = useState(false);
-  const [cavemanLevel, setCavemanLevel] = useState("full");
-  const [ponytailEnabled, setPonytailEnabled] = useState(false);
-  const [ponytailLevel, setPonytailLevel] = useState("full");
-  const [customPromptEnabled, setCustomPromptEnabled] = useState(false);
-  const [customPrompt, setCustomPrompt] = useState("");
-  const [pxpipeEnabled, setPxpipeEnabled] = useState(false);
-  const [pxpipeMinChars, setPxpipeMinChars] = useState(25000);
+  const [cavemanEnabled, setCavemanEnabled] = useState(
+    () => !!initialSettings?.cavemanEnabled
+  );
+  const [cavemanLevel, setCavemanLevel] = useState(
+    () => initialSettings?.cavemanLevel || "full"
+  );
+  const [ponytailEnabled, setPonytailEnabled] = useState(
+    () => !!initialSettings?.ponytailEnabled
+  );
+  const [ponytailLevel, setPonytailLevel] = useState(
+    () => initialSettings?.ponytailLevel || "full"
+  );
+  const [customPromptEnabled, setCustomPromptEnabled] = useState(
+    () => !!initialSettings?.customPromptEnabled
+  );
+  const [customPrompt, setCustomPrompt] = useState(
+    () => initialSettings?.customPrompt || ""
+  );
+  const [pxpipeEnabled, setPxpipeEnabled] = useState(
+    () => !!initialSettings?.pxpipeEnabled
+  );
+  const [pxpipeMinChars, setPxpipeMinChars] = useState(() =>
+    typeof initialSettings?.pxpipeMinChars === "number"
+      ? initialSettings.pxpipeMinChars
+      : 25000
+  );
   const [pxpipeStatus, setPxpipeStatus] = useState({
     installed: false,
     installing: false,
@@ -427,25 +463,37 @@ export default function TokenSaverClient() {
   };
 
   useEffect(() => {
+    const applySettings = (data) => {
+      if (!data) return;
+      setRtkEnabledState(data.rtkEnabled !== false);
+      setHeadroomEnabled(!!data.headroomEnabled);
+      setHeadroomUrl(data.headroomUrl || "http://localhost:8787");
+      if (typeof data.headroomTimeoutMs === "number") setHeadroomTimeoutMs(data.headroomTimeoutMs);
+      setCodeAware(data.headroomCodeAware === true);
+      setKompress(data.headroomKompress !== false);
+      setCavemanEnabled(!!data.cavemanEnabled);
+      setCavemanLevel(data.cavemanLevel || "full");
+      setPonytailEnabled(!!data.ponytailEnabled);
+      setPonytailLevel(data.ponytailLevel || "full");
+      setCustomPromptEnabled(!!data.customPromptEnabled);
+      setCustomPrompt(data.customPrompt || "");
+      setPxpipeEnabled(!!data.pxpipeEnabled);
+      if (typeof data.pxpipeMinChars === "number") setPxpipeMinChars(data.pxpipeMinChars);
+    };
+    runWithCache(() => {
+      const cached = readCache("settings", null);
+      if (cached) {
+        applySettings(cached);
+        setSettingsLoading(false);
+      }
+    });
     const loadSettings = async () => {
       try {
         const res = await fetch("/api/settings");
         if (res.ok) {
           const data = await res.json();
-          setRtkEnabledState(data.rtkEnabled !== false);
-          setHeadroomEnabled(!!data.headroomEnabled);
-          setHeadroomUrl(data.headroomUrl || "http://localhost:8787");
-          if (typeof data.headroomTimeoutMs === "number") setHeadroomTimeoutMs(data.headroomTimeoutMs);
-          setCodeAware(data.headroomCodeAware === true);
-          setKompress(data.headroomKompress !== false);
-          setCavemanEnabled(!!data.cavemanEnabled);
-          setCavemanLevel(data.cavemanLevel || "full");
-          setPonytailEnabled(!!data.ponytailEnabled);
-          setPonytailLevel(data.ponytailLevel || "full");
-          setCustomPromptEnabled(!!data.customPromptEnabled);
-          setCustomPrompt(data.customPrompt || "");
-          setPxpipeEnabled(!!data.pxpipeEnabled);
-          if (typeof data.pxpipeMinChars === "number") setPxpipeMinChars(data.pxpipeMinChars);
+          writeCache("settings", data);
+          applySettings(data);
           refreshHeadroomStatus();
           // PRD: run the PXPIPE health check automatically when the page opens
           refreshPxpipeStatus().then(runPxpipeHealth);

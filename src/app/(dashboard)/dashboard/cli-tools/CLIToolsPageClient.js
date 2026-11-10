@@ -1,44 +1,38 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { CardSkeleton } from "@/shared/components";
 import { CLI_TOOLS, MITM_TOOLS } from "@/shared/constants/cliTools";
+import { getInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 import { MitmLinkCard } from "./components";
 import ToolSummaryCard from "./components/ToolSummaryCard";
 
 const ALL_STATUSES_URL = "/api/cli-tools/all-statuses";
 
 export default function CLIToolsPageClient({ machineId }) {
-  const [loading, setLoading] = useState(true);
-  const [toolStatuses, setToolStatuses] = useState({});
+  const [toolStatuses, setToolStatuses] = useState(() =>
+    getInitialCache("cliToolStatuses", {})
+  );
 
   useEffect(() => {
     let mounted = true;
+    runWithCache(() => {
+      const cached = readCache("cliToolStatuses", null);
+      if (cached && mounted) setToolStatuses(cached);
+    });
     (async () => {
       try {
         const res = await fetch(ALL_STATUSES_URL);
-        if (res.ok && mounted) setToolStatuses(await res.json());
+        if (res.ok && mounted) {
+          const data = await res.json();
+          writeCache("cliToolStatuses", data);
+          setToolStatuses(data);
+        }
       } catch (error) {
         console.log("Error fetching tool statuses:", error);
-      } finally {
-        if (mounted) setLoading(false);
       }
     })();
     return () => { mounted = false; };
   }, []);
-
-  if (loading) {
-    return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-        <CardSkeleton />
-        <CardSkeleton />
-        <CardSkeleton />
-        <CardSkeleton />
-        <CardSkeleton />
-        <CardSkeleton />
-      </div>
-    );
-  }
 
   const regularTools = Object.entries(CLI_TOOLS);
   const mitmTools = Object.entries(MITM_TOOLS);

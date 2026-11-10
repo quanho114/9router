@@ -19,6 +19,7 @@ import ProviderTopology from "@/app/(dashboard)/dashboard/usage/components/Provi
 import UsageChart from "@/app/(dashboard)/dashboard/usage/components/UsageChart";
 import ProviderBarChart from "@/app/(dashboard)/dashboard/usage/components/ProviderBarChart";
 import TopModelsChart from "@/app/(dashboard)/dashboard/usage/components/TopModelsChart";
+import { getInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 
 const statsCacheByPeriod = new Map();
 let cachedProvidersList = null;
@@ -212,29 +213,49 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const sortBy = searchParams.get("sortBy") || "rawModel";
   const sortOrder = searchParams.get("sortOrder") || "asc";
 
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [periodLocal, setPeriodLocal] = useState("today");
+  const period = periodProp ?? periodLocal;
+  const setPeriod = setPeriodProp ?? setPeriodLocal;
+
+  const initialStats =
+    statsCacheByPeriod.get(period) || getInitialCache(`usageStats:${period}`, null);
+  const initialProviders =
+    cachedProvidersList || getInitialCache("usageProvidersList", null);
+
+  const [stats, setStats] = useState(() => initialStats);
+  const [loading, setLoading] = useState(() => !initialStats);
   const [fetching, setFetching] = useState(false);
   const [tableView, setTableView] = useState("model");
   const [viewMode, setViewMode] = useState("costs");
-  const [providers, setProviders] = useState(() => cachedProvidersList || []);
-  const [providersLoaded, setProvidersLoaded] = useState(() => cachedProvidersList !== null);
-  const [periodLocal, setPeriodLocal] = useState("today");
-  const hasLoadedStats = useRef(false);
+  const [providers, setProviders] = useState(() => initialProviders || []);
+  const [providersLoaded, setProvidersLoaded] = useState(
+    () => initialProviders !== null
+  );
+  const hasLoadedStats = useRef(Boolean(initialStats));
   const liveStats = useRef(null);
-  const period = periodProp ?? periodLocal;
-  const setPeriod = setPeriodProp ?? setPeriodLocal;
 
   // Fetch connected providers once, deduplicate by provider type
   // Always include noAuth free providers (e.g. opencode) regardless of connections
   useEffect(() => {
     let cancelled = false;
+    runWithCache(() => {
+      if (cancelled) return;
+      const persistedProviders =
+        cachedProvidersList || readCache("usageProvidersList", null);
+      if (persistedProviders) {
+        cachedProvidersList = persistedProviders;
+        setProviders(persistedProviders);
+        setProvidersLoaded(true);
+      }
+    });
     Promise.all([
       fetch("/api/providers").then((r) => r.ok ? r.json() : null),
       fetch("/api/provider-nodes").then((r) => r.ok ? r.json() : null),
     ])
       .then(([d, nodesData]) => {
         if (cancelled) return;
+        if (d?.connections) writeCache("providers", d.connections);
+        if (nodesData?.nodes) writeCache("providerNodes", nodesData.nodes);
         // Build node name lookup for custom providers
         const nodeNameMap = {};
         for (const node of (nodesData?.nodes || [])) {
@@ -257,6 +278,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
           .map((p) => ({ provider: p.id, name: p.name }));
         const nextProviders = [...unique, ...noAuthProviders];
         cachedProvidersList = nextProviders;
+        writeCache("usageProvidersList", nextProviders);
         setProviders(nextProviders);
       })
       .catch(() => {})
@@ -271,24 +293,29 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   // Fetch filtered stats via REST when period changes
   useEffect(() => {
     let cancelled = false;
-    const cachedForPeriod = statsCacheByPeriod.get(period);
+    runWithCache(() => {
+      if (cancelled) return;
+      const cachedForPeriod =
+        statsCacheByPeriod.get(period) || readCache(`usageStats:${period}`, null);
 
-    if (cachedForPeriod) {
-      hasLoadedStats.current = true;
-      setStats((prev) => ({
-        ...cachedForPeriod,
-        ...(prev?.activeRequests ? { activeRequests: prev.activeRequests } : {}),
-        ...(prev?.recentRequests ? { recentRequests: prev.recentRequests } : {}),
-        ...(prev?.errorProvider !== undefined ? { errorProvider: prev.errorProvider } : {}),
-        ...(prev?.pending ? { pending: prev.pending } : {}),
-      }));
-      setLoading(false);
-      setFetching(true);
-    } else if (!hasLoadedStats.current) {
-      setLoading(true);
-    } else {
-      setFetching(true);
-    }
+      if (cachedForPeriod) {
+        statsCacheByPeriod.set(period, cachedForPeriod);
+        hasLoadedStats.current = true;
+        setStats((prev) => ({
+          ...cachedForPeriod,
+          ...(prev?.activeRequests ? { activeRequests: prev.activeRequests } : {}),
+          ...(prev?.recentRequests ? { recentRequests: prev.recentRequests } : {}),
+          ...(prev?.errorProvider !== undefined ? { errorProvider: prev.errorProvider } : {}),
+          ...(prev?.pending ? { pending: prev.pending } : {}),
+        }));
+        setLoading(false);
+        setFetching(true);
+      } else if (!hasLoadedStats.current) {
+        setLoading(true);
+      } else {
+        setFetching(true);
+      }
+    });
 
     fetch(`/api/usage/stats?period=${period}`)
       .then((r) => r.ok ? r.json() : null)
@@ -296,6 +323,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         if (cancelled || !data) return;
         hasLoadedStats.current = true;
         statsCacheByPeriod.set(period, data);
+        writeCache(`usageStats:${period}`, data);
         // SSE may have already reported completion while this REST read was running.
         setStats((prev) => ({ ...prev, ...data, ...liveStats.current }));
       })

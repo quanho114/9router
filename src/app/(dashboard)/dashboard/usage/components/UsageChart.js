@@ -12,6 +12,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import Card from "@/shared/components/Card";
+import { getInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 
 const fmtTokens = (n) => {
   if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
@@ -37,23 +38,30 @@ const VIEW_CONFIG = {
 const chartDataCache = new Map();
 
 export default function UsageChart({ period = "7d" }) {
-  const [data, setData] = useState(() => chartDataCache.get(period) || []);
-  const [loading, setLoading] = useState(() => !chartDataCache.has(period));
+  const initialChart =
+    chartDataCache.get(period) || getInitialCache(`usageChart:${period}`, null);
+  const [data, setData] = useState(() => initialChart || []);
+  const [loading, setLoading] = useState(() => !initialChart);
   const [viewMode, setViewMode] = useState("tokens");
 
   const fetchData = useCallback(async () => {
-    const cached = chartDataCache.get(period);
-    if (cached) {
-      setData(cached);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
+    runWithCache(() => {
+      const cached =
+        chartDataCache.get(period) || readCache(`usageChart:${period}`, null);
+      if (cached) {
+        chartDataCache.set(period, cached);
+        setData(cached);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
+    });
     try {
       const res = await fetch(`/api/usage/chart?period=${period}`);
       if (res.ok) {
         const json = await res.json();
         chartDataCache.set(period, json);
+        writeCache(`usageChart:${period}`, json);
         setData(json);
       }
     } catch (e) {

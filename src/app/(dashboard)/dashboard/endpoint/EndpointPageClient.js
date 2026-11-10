@@ -14,6 +14,7 @@ import {
 } from "./endpointConstants";
 import { clientPingUrl, clientPingAny } from "./endpointPing";
 import useSettingsStore from "@/store/settingsStore";
+import { getInitialCache, hasInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 import EndpointRow from "./components/EndpointRow";
 import StatusAlert from "./components/StatusAlert";
 import Tooltip from "./components/Tooltip";
@@ -23,17 +24,26 @@ import TokenQuotaRing from "./components/TokenQuotaRing";
 import UserKeyProvisionModal from "./components/UserKeyProvisionModal";
 import { checkKeyStatus } from "@/shared/utils/keyAccess";
 export default function APIPageClient({ machineId }) {
-  const [keys, setKeys] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const initialSettings = getInitialCache("settings", null);
+  const [keys, setKeys] = useState(() => getInitialCache("keys", []));
+  const [loading, setLoading] = useState(() => !hasInitialCache("keys"));
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingKey, setEditingKey] = useState(null);
   const [createdKey, setCreatedKey] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
 
-  const [requireApiKey, setRequireApiKey] = useState(false);
-  const [requireLogin, setRequireLogin] = useState(true);
-  const [hasPassword, setHasPassword] = useState(true);
- const [tunnelDashboardAccess, setTunnelDashboardAccess] = useState(false);
+  const [requireApiKey, setRequireApiKey] = useState(
+    () => initialSettings?.requireApiKey || false
+  );
+  const [requireLogin, setRequireLogin] = useState(
+    () => initialSettings?.requireLogin !== false
+  );
+  const [hasPassword, setHasPassword] = useState(
+    () => initialSettings?.hasPassword ?? true
+  );
+  const [tunnelDashboardAccess, setTunnelDashboardAccess] = useState(
+    () => initialSettings?.tunnelDashboardAccess || false
+  );
 
  // Cloudflare Tunnel state
   const [tunnelChecking, setTunnelChecking] = useState(true);
@@ -116,6 +126,7 @@ export default function APIPageClient({ machineId }) {
         if (!res.ok) return;
         const data = await res.json();
         if (Array.isArray(data.keys)) {
+          writeCache("keys", data.keys);
           setKeys(data.keys);
         }
       } catch {
@@ -269,6 +280,13 @@ export default function APIPageClient({ machineId }) {
   };
 
   const fetchData = async () => {
+    runWithCache(() => {
+      const cachedKeys = readCache("keys", null);
+      if (cachedKeys !== null) {
+        setKeys(cachedKeys);
+        setLoading(false);
+      }
+    });
     try {
       const fetchKeys = async () => {
         const res = await fetch("/api/keys");
@@ -289,6 +307,7 @@ export default function APIPageClient({ machineId }) {
           if (createRes.ok) existing = await fetchKeys();
         } catch { /* fall through to empty render */ }
       }
+      writeCache("keys", existing);
       setKeys(existing);
     } catch (error) {
       console.log("Error fetching data:", error);

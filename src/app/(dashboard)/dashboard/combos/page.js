@@ -10,6 +10,7 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
 import { resolveProviderId, AI_PROVIDERS } from "@/shared/constants/providers";
+import { getInitialCache, hasInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -66,14 +67,35 @@ function getPolicyBadgeLabel(strategy = {}) {
   return "Smart (≥80%)";
 }
 
+function buildCapacityAdapterState(rawAdapter = {}) {
+  const normalized = {};
+  for (const cap of CAPACITY_ADAPTER_CAPS) {
+    normalized[cap.key] = normalizeCapEntry(rawAdapter[cap.key]);
+  }
+  return { ...EMPTY_CAPACITY_ADAPTER, ...normalized };
+}
+
 export default function CombosPage() {
-  const [combos, setCombos] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const initialCombos = getInitialCache("combos", null);
+  const initialProviders = getInitialCache("providers", null);
+  const initialSettings = getInitialCache("settings", null);
+  const [combos, setCombos] = useState(() =>
+    (initialCombos || []).filter((c) => !c.kind || c.kind === "llm")
+  );
+  const [loading, setLoading] = useState(() => !hasInitialCache("combos"));
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingCombo, setEditingCombo] = useState(null);
-  const [activeProviders, setActiveProviders] = useState([]);
-  const [comboStrategies, setComboStrategies] = useState({});
-  const [capacityAdapter, setCapacityAdapter] = useState(EMPTY_CAPACITY_ADAPTER);
+  const [activeProviders, setActiveProviders] = useState(() =>
+    (initialProviders || []).filter((c) => c.isActive !== false)
+  );
+  const [comboStrategies, setComboStrategies] = useState(
+    () => initialSettings?.comboStrategies || {}
+  );
+  const [capacityAdapter, setCapacityAdapter] = useState(() =>
+    initialSettings?.capacityAdapter
+      ? buildCapacityAdapterState(initialSettings.capacityAdapter)
+      : EMPTY_CAPACITY_ADAPTER
+  );
   const { getCaps } = useModelCaps();
   const [confirmState, setConfirmState] = useState(null);
   const [presetLoading, setPresetLoading] = useState(null); // "cursor" | "claude" | null
@@ -182,6 +204,22 @@ export default function CombosPage() {
   };
 
   const fetchData = async () => {
+    runWithCache(() => {
+      const cachedCombos = readCache("combos", null);
+      const cachedProviders = readCache("providers", null);
+      const cachedSettings = readCache("settings", null);
+      if (cachedCombos !== null) {
+        setCombos(cachedCombos.filter((c) => !c.kind || c.kind === "llm"));
+        if (cachedProviders !== null) {
+          setActiveProviders(cachedProviders.filter((c) => c.isActive !== false));
+        }
+        if (cachedSettings !== null) {
+          setComboStrategies(cachedSettings.comboStrategies || {});
+          setCapacityAdapter(buildCapacityAdapterState(cachedSettings.capacityAdapter || {}));
+        }
+        setLoading(false);
+      }
+    });
     try {
       const [combosRes, providersRes, settingsRes] = await Promise.all([
         fetch("/api/combos"),
@@ -193,17 +231,21 @@ export default function CombosPage() {
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
 
       // Only LLM combos here - webSearch/webFetch combos belong to media-providers/web
-      if (combosRes.ok) setCombos((combosData.combos || []).filter(c => !c.kind || c.kind === "llm"));
+      if (combosRes.ok) {
+        const allCombos = combosData.combos || [];
+        writeCache("combos", allCombos);
+        setCombos(allCombos.filter(c => !c.kind || c.kind === "llm"));
+      }
       if (providersRes.ok) {
-        setActiveProviders((providersData.connections || []).filter((c) => c.isActive !== false));
+        const allConns = providersData.connections || [];
+        writeCache("providers", allConns);
+        setActiveProviders(allConns.filter((c) => c.isActive !== false));
+      }
+      if (settingsRes.ok) {
+        writeCache("settings", settingsData);
       }
       setComboStrategies(settingsData.comboStrategies || {});
-      const rawAdapter = settingsData.capacityAdapter || {};
-      const normalized = {};
-      for (const cap of CAPACITY_ADAPTER_CAPS) {
-        normalized[cap.key] = normalizeCapEntry(rawAdapter[cap.key]);
-      }
-      setCapacityAdapter(normalized);
+      setCapacityAdapter(buildCapacityAdapterState(settingsData.capacityAdapter || {}));
     } catch (error) {
       console.log("Error fetching data:", error);
     } finally {

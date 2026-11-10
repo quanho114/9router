@@ -5,6 +5,7 @@ import Link from "next/link";
 import { CardSkeleton } from "@/shared/components";
 import { CLI_TOOLS } from "@/shared/constants/cliTools";
 import { getModelsByProviderId, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
+import { getInitialCache, hasInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 import {
   ClaudeToolCard, CodexToolCard, DroidToolCard, OpenClawToolCard,
   HermesToolCard, DefaultToolCard, OpenCodeToolCard, CoworkToolCard,
@@ -16,18 +17,34 @@ const CLOUD_URL = process.env.NEXT_PUBLIC_CLOUD_URL;
 
 export default function ToolDetailClient({ toolId, machineId }) {
   const tool = CLI_TOOLS[toolId];
-  const [connections, setConnections] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const initialSettings = getInitialCache("settings", null);
+  const [connections, setConnections] = useState(() =>
+    getInitialCache("providers", [])
+  );
+  const [loading, setLoading] = useState(() => !hasInitialCache("providers"));
   const [modelMappings, setModelMappings] = useState({});
-  const [cloudEnabled, setCloudEnabled] = useState(false);
+  const [cloudEnabled, setCloudEnabled] = useState(
+    () => initialSettings?.cloudEnabled || false
+  );
   const [tunnelEnabled, setTunnelEnabled] = useState(false);
   const [tunnelPublicUrl, setTunnelPublicUrl] = useState("");
   const [tailscaleEnabled, setTailscaleEnabled] = useState(false);
   const [tailscaleUrl, setTailscaleUrl] = useState("");
-  const [apiKeys, setApiKeys] = useState([]);
+  const [apiKeys, setApiKeys] = useState(() => getInitialCache("keys", []));
 
   useEffect(() => {
     let mounted = true;
+    runWithCache(() => {
+      const cachedConns = readCache("providers", null);
+      const cachedSettings = readCache("settings", null);
+      const cachedKeys = readCache("keys", null);
+      if (cachedConns !== null && mounted) {
+        setConnections(cachedConns);
+        if (cachedSettings !== null) setCloudEnabled(cachedSettings.cloudEnabled || false);
+        if (cachedKeys !== null) setApiKeys(cachedKeys);
+        setLoading(false);
+      }
+    });
     (async () => {
       try {
         const [provRes, settingsRes, tunnelRes, keysRes] = await Promise.all([
@@ -39,10 +56,13 @@ export default function ToolDetailClient({ toolId, machineId }) {
         if (!mounted) return;
         if (provRes.ok) {
           const data = await provRes.json();
-          setConnections(data.connections || []);
+          const conns = data.connections || [];
+          writeCache("providers", conns);
+          setConnections(conns);
         }
         if (settingsRes.ok) {
           const data = await settingsRes.json();
+          writeCache("settings", data);
           setCloudEnabled(data.cloudEnabled || false);
         }
         if (tunnelRes.ok) {
@@ -54,7 +74,9 @@ export default function ToolDetailClient({ toolId, machineId }) {
         }
         if (keysRes.ok) {
           const data = await keysRes.json();
-          setApiKeys(data.keys || []);
+          const list = data.keys || [];
+          writeCache("keys", list);
+          setApiKeys(list);
         }
       } catch (error) {
         console.log("Error loading tool data:", error);

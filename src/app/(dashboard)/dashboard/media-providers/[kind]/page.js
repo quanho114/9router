@@ -3,9 +3,10 @@
 import { useParams, notFound, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Card, Badge, Button, Toggle, AddCustomEmbeddingModal, ProvidersGridSkeleton } from "@/shared/components";
+import { Card, Badge, Button, Toggle, AddCustomEmbeddingModal } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS, getProvidersByKind } from "@/shared/constants/providers";
+import { getInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 
 // Kinds that support combos (currently disabled for image/tts — temporarily hidden).
 // webSearch/webFetch handled by /web page.
@@ -140,10 +141,15 @@ function ComboList({ combos }) {
 export default function MediaProviderKindPage() {
   const { kind } = useParams();
   const router = useRouter();
-  const [connections, setConnections] = useState([]);
-  const [customNodes, setCustomNodes] = useState([]);
-  const [combos, setCombos] = useState([]);
-  const [loadedKind, setLoadedKind] = useState(null);
+  const [connections, setConnections] = useState(() =>
+    getInitialCache("providers", [])
+  );
+  const [customNodes, setCustomNodes] = useState(() =>
+    (getInitialCache("providerNodes", []) || []).filter(
+      (n) => n.type === "custom-embedding"
+    )
+  );
+  const [combos, setCombos] = useState(() => getInitialCache("combos", []));
   const [showAddCustomEmbedding, setShowAddCustomEmbedding] = useState(false);
 
   // webSearch/webFetch listing pages are merged into /web
@@ -160,10 +166,31 @@ export default function MediaProviderKindPage() {
   useEffect(() => {
     if (!kindConfig) return;
     let cancelled = false;
+    runWithCache(() => {
+      if (cancelled) return;
+      const cachedConns = readCache("providers", null);
+      if (cachedConns !== null) setConnections(cachedConns);
+      if (isEmbedding) {
+        const cachedNodes = readCache("providerNodes", null);
+        if (cachedNodes !== null) {
+          setCustomNodes(cachedNodes.filter((n) => n.type === "custom-embedding"));
+        }
+      }
+      if (supportsCombo) {
+        const cachedCombos = readCache("combos", null);
+        if (cachedCombos !== null) setCombos(cachedCombos);
+      }
+    });
     const tasks = [
       fetch("/api/providers", { cache: "no-store" })
         .then((r) => r.json())
-        .then((d) => { if (!cancelled) setConnections(d.connections || []); })
+        .then((d) => {
+          if (!cancelled) {
+            const list = d.connections || [];
+            writeCache("providers", list);
+            setConnections(list);
+          }
+        })
         .catch(() => {}),
     ];
     if (isEmbedding) {
@@ -172,7 +199,9 @@ export default function MediaProviderKindPage() {
           .then((r) => r.json())
           .then((d) => {
             if (!cancelled) {
-              setCustomNodes((d.nodes || []).filter((n) => n.type === "custom-embedding"));
+              const allNodes = d.nodes || [];
+              writeCache("providerNodes", allNodes);
+              setCustomNodes(allNodes.filter((n) => n.type === "custom-embedding"));
             }
           })
           .catch(() => {})
@@ -182,19 +211,22 @@ export default function MediaProviderKindPage() {
       tasks.push(
         fetch("/api/combos", { cache: "no-store" })
           .then((r) => r.json())
-          .then((d) => { if (!cancelled) setCombos(d.combos || []); })
+          .then((d) => {
+            if (!cancelled) {
+              const list = d.combos || [];
+              writeCache("combos", list);
+              setCombos(list);
+            }
+          })
           .catch(() => {})
       );
     }
-    Promise.allSettled(tasks).finally(() => {
-      if (!cancelled) setLoadedKind(kind);
-    });
+    Promise.allSettled(tasks);
     return () => {
       cancelled = true;
     };
   }, [isEmbedding, supportsCombo, kindConfig, kind]);
   if (!kindConfig) return notFound();
-  if (loadedKind !== kind) return <ProvidersGridSkeleton count={8} />;
 
   const providers = getProvidersByKind(kind);
   const kindCombos = combos.filter((c) => c.kind === kind);

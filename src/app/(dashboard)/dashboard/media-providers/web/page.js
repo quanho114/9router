@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Card, Badge, Button, ProvidersGridSkeleton } from "@/shared/components";
+import { Card, Badge, Button } from "@/shared/components";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import { AI_PROVIDERS, getProvidersByKind } from "@/shared/constants/providers";
+import { getInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
 
 function getEffectiveStatus(conn) {
   const isCooldown = Object.entries(conn).some(
@@ -145,28 +146,39 @@ function Section({ title, icon, kind, providers, connections, combos, onCreateCo
 
 export default function WebProvidersPage() {
   const router = useRouter();
-  const [connections, setConnections] = useState([]);
-  const [combos, setCombos] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [connections, setConnections] = useState(() =>
+    getInitialCache("providers", [])
+  );
+  const [combos, setCombos] = useState(() => getInitialCache("combos", []));
 
   const fetchAll = async () => {
+    runWithCache(() => {
+      const cachedConns = readCache("providers", null);
+      const cachedCombos = readCache("combos", null);
+      if (cachedConns !== null) setConnections(cachedConns);
+      if (cachedCombos !== null) setCombos(cachedCombos);
+    });
     try {
       const [connsRes, combosRes] = await Promise.all([
         fetch("/api/providers", { cache: "no-store" }),
         fetch("/api/combos", { cache: "no-store" }),
       ]);
-      if (connsRes.ok) setConnections((await connsRes.json()).connections || []);
-      if (combosRes.ok) setCombos((await combosRes.json()).combos || []);
+      if (connsRes.ok) {
+        const list = (await connsRes.json()).connections || [];
+        writeCache("providers", list);
+        setConnections(list);
+      }
+      if (combosRes.ok) {
+        const list = (await combosRes.json()).combos || [];
+        writeCache("combos", list);
+        setCombos(list);
+      }
     } catch { /* noop */ }
-    finally {
-      setLoading(false);
-    }
   };
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { fetchAll(); }, []);
 
-  if (loading) return <ProvidersGridSkeleton count={8} />;
   const searchProviders = getProvidersByKind("webSearch");
   const fetchProviders = getProvidersByKind("webFetch");
   const searchCombos = combos.filter((c) => c.kind === "webSearch");
