@@ -133,14 +133,16 @@ export class BaseExecutor {
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 
+      const bodyStr = JSON.stringify(transformedBody);
       // Abort if upstream doesn't return response headers within connection timeout
       const connectCtrl = new AbortController();
-      const timeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
+      const timeoutMs = typeof this.getConnectTimeoutMs === "function"
+        ? this.getConnectTimeoutMs(model, bodyStr.length, providerOverrides)
+        : (providerOverrides?.connectTimeoutMs || this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS);
       const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
       const mergedSignal = signal ? AbortSignal.any([signal, connectCtrl.signal]) : connectCtrl.signal;
 
       try {
-        const bodyStr = JSON.stringify(transformedBody);
         const fetchT0 = Date.now();
         dbg("FETCH", `${this.provider.toUpperCase()} → ${url} | body=${bodyStr.length}B | connectTimeout=${timeoutMs}ms`);
         const response = await proxyAwareFetch(url, {
@@ -169,12 +171,25 @@ export class BaseExecutor {
       } catch (error) {
         clearTimeout(connectTimer);
         lastError = error;
-        const isConnectTimeout = connectCtrl.signal.aborted && error.name === "AbortError";
+        const isConnectTimeout = connectCtrl.signal.aborted && !signal?.aborted;
         dbg("FETCH", `${this.provider.toUpperCase()} ✖ ${error.name}: ${error.message}${isConnectTimeout ? " (connect timeout)" : ""}`);
-        // Connect timeout is internal — convert to retryable network error, don't propagate AbortError
-        if (error.name === "AbortError" && !isConnectTimeout) throw error;
+        // Caller-initiated abort: propagate immediately as AbortError
+        if (signal?.aborted || (error.name === "AbortError" && !isConnectTimeout)) throw error;
 
-        // Map network/fetch exceptions to 502 retry config
+        // Do not retry connect timeouts on the same account/URL — fail over immediately
+        // so stalled upstream accounts don't multiply wait time by 4x before account rotation.
+        if (isConnectTimeout) {
+          const timeoutError = new Error(`fetch connect timeout (${timeoutMs}ms)`);
+          timeoutError.isConnectTimeout = true;
+          lastError = timeoutError;
+          if (urlIndex + 1 < fallbackCount) {
+            log?.debug?.("RETRY", `Connect timeout on ${url}, trying fallback ${urlIndex + 1}`);
+            continue;
+          }
+          throw timeoutError;
+        }
+
+        // Map transient network/fetch exceptions to 502 retry config
         if (await tryRetry(urlIndex, HTTP_STATUS.BAD_GATEWAY, `network "${error.message}"`)) { urlIndex--; continue; }
 
         if (urlIndex + 1 < fallbackCount) {

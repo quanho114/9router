@@ -135,4 +135,30 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
     expect(out.requestId).toMatch(/^agent\/[0-9a-f-]{36}\/\d{13}\/[0-9a-f-]{36}\/\d+$/);
     expect(out.request.generationConfig.maxOutputTokens).toBe(64000);
   });
+
+  it("scales connect timeout with payload size and caps at 200s", () => {
+    expect(ag.getConnectTimeoutMs("gemini-4-argon-high", 2_000)).toBe(15_000);
+    expect(ag.getConnectTimeoutMs("claude-sonnet-5-5-medium", 2_000)).toBe(12_000);
+    expect(ag.getConnectTimeoutMs("gemini-4-argon-high", 96_000)).toBe(23_000);
+    expect(ag.getConnectTimeoutMs("gemini-4-argon-high", 5_000_000)).toBe(200_000);
+    expect(ag.getConnectTimeoutMs("gemini-4-argon-high", 2_000, { connectTimeoutMs: 9_000 })).toBe(9_000);
+  });
+
+  it("does not retry connect timeouts on the same account", async () => {
+    let calls = 0;
+    await expect(
+      ag.execute({
+        model: "gemini-4-argon-high",
+        body: { request: { contents: [{ role: "user", parts: [{ text: "hi" }] }] } },
+        stream: true,
+        credentials: { accessToken: "tok", projectId: "proj-1" },
+        providerOverrides: { connectTimeoutMs: 25 },
+        directFetch: (_url, init) => new Promise((_resolve, reject) => {
+          calls++;
+          init.signal.addEventListener("abort", () => reject(init.signal.reason || new DOMException("Aborted", "AbortError")));
+        }),
+      })
+    ).rejects.toThrow(/fetch connect timeout/);
+    expect(calls).toBe(1);
+  });
 });

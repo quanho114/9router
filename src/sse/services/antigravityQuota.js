@@ -216,8 +216,11 @@ export function clearAntigravityStrikes(connectionId, model) {
   const family = getAntigravityModelFamily(model);
   if (family === "claude_gpt" && cached?.claude_gpt_session?.resetAt === iso) {
     delete cached.claude_gpt_session;
-  } else if (family === "argon" && cached?.argon_session?.resetAt === iso) {
-    delete cached.argon_session;
+  } else if (family === "argon") {
+    if (cached?.argon_session?.resetAt === iso) delete cached.argon_session;
+    if (strikeBlocks.get(`${connectionId}|argon_session`) === until) {
+      strikeBlocks.delete(`${connectionId}|argon_session`);
+    }
   } else if (family === "gemini" && cached?.gemini_session?.resetAt === iso) {
     delete cached.gemini_session;
   }
@@ -362,4 +365,34 @@ export async function handleAntigravityQuotaError(connectionId, status, model, a
 
   log.warn("AG_QUOTA", `${connectionId.slice(0, 8)} | UPSTREAM_${status} ${model} — quota exhausted; CACHE_BLOCK until ${quota.resetAt}`);
   return resetMs;
+}
+
+/**
+ * Handle Antigravity upstream connect timeout / gateway stall (502/504).
+ * When an account holds HTTP headers past the connect timeout (e.g. Google's
+ * 60s+ server-side hold on Argon for specific accounts despite >0% reported quota),
+ * immediately cache-block that connection+model (and argon_session when Argon)
+ * for 15 minutes so subsequent turns route directly to responsive accounts.
+ */
+export function handleAntigravityStallError(connectionId, status, model, errorText = "") {
+  if (!connectionId || !model) return null;
+  const isTimeout =
+    status === 504 ||
+    (status === 502 && /connect timeout|timed out|timeout/i.test(String(errorText || "")));
+  if (!isTimeout) return null;
+
+  const blockedUntil = Date.now() + STRIKE_BLOCK_MS;
+  const iso = new Date(blockedUntil).toISOString();
+  const cached = quotaCache.get(connectionId) || {};
+  cached[model] = { remainingPercentage: 0, resetAt: iso };
+  strikeBlocks.set(`${connectionId}|${model}`, blockedUntil);
+
+  if (getAntigravityModelFamily(model) === "argon") {
+    cached.argon_session = { remainingPercentage: 0, resetAt: iso };
+    strikeBlocks.set(`${connectionId}|argon_session`, blockedUntil);
+  }
+
+  quotaCache.set(connectionId, cached);
+  log.warn("AG_QUOTA", `${connectionId.slice(0, 8)} | STALL_${status} ${model} — connect timeout; CACHE_BLOCK 15m`);
+  return blockedUntil;
 }

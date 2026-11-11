@@ -27,7 +27,7 @@ vi.mock("open-sse/services/usage/google.js", () => ({
 }));
 vi.mock("@/sse/utils/logger.js", () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }));
 
-const { getAntigravityQuotaCache, getAntigravityModelQuota, handleAntigravityQuotaError, refreshAntigravityQuota, clearAntigravityStrikes } = await import("@/sse/services/antigravityQuota.js");
+const { getAntigravityQuotaCache, getAntigravityModelQuota, handleAntigravityQuotaError, handleAntigravityStallError, refreshAntigravityQuota, clearAntigravityStrikes } = await import("@/sse/services/antigravityQuota.js");
 const { getProviderCredentials } = await import("@/sse/services/auth.js");
 
 const MODEL = "claude-opus-4-6-thinking";
@@ -529,6 +529,44 @@ describe("Antigravity quota-aware routing", () => {
     try {
       const creds = await getProviderCredentials("antigravity", null, "gemini-4-argon-medium");
       expect(creds.connectionId).toBe("ag-stale-lock");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cache-blocks Argon family on 502 connect timeout so sibling Argon tiers skip stalled account while Claude stays usable", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-26T00:00:00.000Z"));
+    mocks.getProviderConnections.mockResolvedValue([
+      { id: "ag-stalled", email: "stalled@example.com", isActive: true },
+      { id: "ag-fast", email: "fast@example.com", isActive: true },
+    ]);
+    getAntigravityQuotaCache().set("ag-stalled", {
+      argon_weekly: { remainingPercentage: 50, resetAt: FUTURE_RESET },
+      claude_gpt_weekly: { remainingPercentage: 50, resetAt: FUTURE_RESET },
+    });
+    getAntigravityQuotaCache().set("ag-fast", {
+      argon_weekly: { remainingPercentage: 46, resetAt: FUTURE_RESET },
+    });
+
+    try {
+      const blockedUntil = handleAntigravityStallError("ag-stalled", 502, "gemini-4-argon-high", "[502]: fetch connect timeout (15000ms)");
+      expect(blockedUntil).toBe(Date.parse("2026-08-26T00:15:00.000Z"));
+
+      // Both gemini-4-argon-high and gemini-4-argon-medium skip ag-stalled and select ag-fast
+      const highCreds = await getProviderCredentials("antigravity", null, "gemini-4-argon-high");
+      expect(highCreds.connectionId).toBe("ag-fast");
+      const medCreds = await getProviderCredentials("antigravity", null, "gemini-4-argon-medium");
+      expect(medCreds.connectionId).toBe("ag-fast");
+
+      // Claude on ag-stalled remains unaffected
+      const claudeCreds = await getProviderCredentials("antigravity", null, "claude-sonnet-5-5-medium");
+      expect(claudeCreds.connectionId).toBe("ag-stalled");
+
+      // Clearing strikes on gemini-4-argon-high restores Argon on ag-stalled
+      clearAntigravityStrikes("ag-stalled", "gemini-4-argon-high");
+      const restoredCreds = await getProviderCredentials("antigravity", null, "gemini-4-argon-medium");
+      expect(restoredCreds.connectionId).toBe("ag-stalled");
     } finally {
       vi.useRealTimers();
     }

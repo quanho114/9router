@@ -112,9 +112,19 @@ function buildIdeRequestId({ body, request, credentials, model, requestType }) {
 
 export class AntigravityExecutor extends BaseExecutor {
   constructor() {
-    // Google streamGenerateContent holds HTTP 200 headers until prompt prefill completes
-    // (75–140s on 500k+ token Argon contexts with cold cache); use first-chunk budget (200s).
     super("antigravity", { ...PROVIDERS.antigravity, timeoutMs: STREAM_FIRST_CHUNK_TIMEOUT_MS });
+  }
+
+  // Adaptive header timeout: healthy Antigravity accounts return HTTP 200 headers in 2–15s on
+  // normal turns, while upstream-held accounts stall for >60s even on tiny prompts. Scale the
+  // connect timeout linearly with request payload size (+1s per 12KB up to 200s) so wedged
+  // accounts fail over quickly on normal requests while 500k+ token prefills still have room.
+  getConnectTimeoutMs(model, bodyBytes = 0, providerOverrides = null) {
+    if (providerOverrides?.connectTimeoutMs > 0) return providerOverrides.connectTimeoutMs;
+    const isArgon = String(model || "").toLowerCase().includes("argon");
+    const baseMs = isArgon ? 15_000 : 12_000;
+    const prefillExtraMs = Math.floor(Math.max(0, Number(bodyBytes) || 0) / 12_000) * 1_000;
+    return Math.min(baseMs + prefillExtraMs, STREAM_FIRST_CHUNK_TIMEOUT_MS);
   }
 
   // Parse Antigravity quota error to extract precise resetsAtMs from ErrorInfo/RetryInfo

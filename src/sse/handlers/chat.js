@@ -9,6 +9,7 @@ import {
 } from "../services/auth.js";
 import {
   handleAntigravityQuotaError,
+  handleAntigravityStallError,
   clearAntigravityStrikes,
   getAntigravityQuotaCache,
   getAntigravityModelFamily,
@@ -284,9 +285,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   // Extract userAgent from request
   const userAgent = request?.headers?.get("user-agent") || "";
-  if (provider === "antigravity" && request?.headers?.get("x-9r-cli-token")) {
-    clearAntigravityStrikes(null, model);
-  }
+  const isCliPing = Boolean(request?.headers?.get("x-9r-cli-token"));
+  let clearedStrikesOnPingFallback = false;
 
   // Try with available accounts (fallback on errors)
   const excludeConnectionIds = new Set();
@@ -299,6 +299,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
+      if (provider === "antigravity" && isCliPing && !clearedStrikesOnPingFallback) {
+        clearedStrikesOnPingFallback = true;
+        clearAntigravityStrikes(null, model);
+        continue;
+      }
       if (credentials?.allRateLimited) {
         const errorMsg = lastError || credentials.lastError || "Unavailable";
         const status = HTTP_STATUS.SERVICE_UNAVAILABLE;
@@ -412,6 +417,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       );
       if (quotaResetMs) resetsAtMs = quotaResetMs;
       else resetsAtMs = null;
+    } else if (provider === "antigravity" && (result.status === 502 || result.status === 504)) {
+      quotaResetMs = handleAntigravityStallError(
+        credentials.connectionId, result.status, model, result.error
+      );
+      if (quotaResetMs) resetsAtMs = quotaResetMs;
     }
 
     // Antigravity 409/429 (and quota-exhausted tier errors) are managed in RAM

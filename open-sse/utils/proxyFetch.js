@@ -421,12 +421,13 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
   const proxyUrl = connectionProxyUrl || envProxyUrl;
 
   // MITM DNS bypass: for known MITM-intercepted hosts, resolve real IP to avoid DNS spoof
-  if (shouldBypassMitmDns(targetUrl)) {
+  if (shouldBypassMitmDns(targetUrl) && !options.directFetch) {
     if (proxyUrl) {
       // Proxy resolves DNS externally (not affected by /etc/hosts) — use proxy directly
       try {
         return await fetchWithTlsFallback(url, options, proxyUrl);
       } catch (proxyError) {
+        if (options.signal?.aborted || proxyError?.name === "AbortError") throw proxyError;
         if (proxyOptions?.strictProxy === true) {
           throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
         }
@@ -439,6 +440,7 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       const realIP = await resolveRealIP(parsedUrl.hostname);
       if (realIP) return await createBypassRequest(parsedUrl, realIP, options);
     } catch (error) {
+      if (options.signal?.aborted || error?.name === "AbortError") throw error;
       console.warn(`[ProxyFetch] MITM bypass failed: ${error.message}`);
     }
   }
