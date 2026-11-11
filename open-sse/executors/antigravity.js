@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { OAUTH_ENDPOINTS, ANTIGRAVITY_HEADERS, AG_DEFAULT_TOOLS, AG_TOOL_SUFFIX, ANTIGRAVITY_PROMPT_REWRITES } from "../config/appConstants.js";
-import { HTTP_STATUS } from "../config/runtimeConfig.js";
+import { HTTP_STATUS, STREAM_FIRST_CHUNK_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { resolveSessionId, toNumericSessionId } from "../utils/sessionManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { cleanJSONSchemaForAntigravity, normalizeGeminiContents } from "../translator/formats/gemini.js";
@@ -112,7 +112,9 @@ function buildIdeRequestId({ body, request, credentials, model, requestType }) {
 
 export class AntigravityExecutor extends BaseExecutor {
   constructor() {
-    super("antigravity", PROVIDERS.antigravity);
+    // Google streamGenerateContent holds HTTP 200 headers until prompt prefill completes
+    // (75–140s on 500k+ token Argon contexts with cold cache); use first-chunk budget (200s).
+    super("antigravity", { ...PROVIDERS.antigravity, timeoutMs: STREAM_FIRST_CHUNK_TIMEOUT_MS });
   }
 
   // Parse Antigravity quota error to extract precise resetsAtMs from ErrorInfo/RetryInfo

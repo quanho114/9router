@@ -284,6 +284,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   // Extract userAgent from request
   const userAgent = request?.headers?.get("user-agent") || "";
+  if (provider === "antigravity" && request?.headers?.get("x-9r-cli-token")) {
+    clearAntigravityStrikes(null, model);
+  }
 
   // Try with available accounts (fallback on errors)
   const excludeConnectionIds = new Set();
@@ -323,11 +326,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       }
     }
 
-    // When rotating to a fallback Antigravity account for an Argon model whose quota/tier
+    // When routing to an Antigravity account for an Argon model whose quota/tier
     // is not yet cached, check quota upfront so free-tier/exhausted accounts are skipped immediately.
     if (
       provider === "antigravity" &&
-      (excludeConnectionIds.size > 0 || getAntigravityQuotaCache().size > 0) &&
       getAntigravityModelFamily(model) === "argon" &&
       !getAntigravityQuotaCache().has(credentials.connectionId)
     ) {
@@ -412,9 +414,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       else resetsAtMs = null;
     }
 
-    // Exhausted Antigravity model is blocked only in RAM cache until upstream resetAt.
-    // Do not persist a modelLock_* for this path.
-    const shouldFallback = provider === "antigravity" && quotaResetMs
+    // Antigravity 409/429 (and quota-exhausted tier errors) are managed in RAM
+    // by antigravityQuotaCache + the 3-strike breaker. Do not persist modelLock_* in DB.
+    const shouldFallback = provider === "antigravity" && (quotaResetMs || result.status === 409 || result.status === 429)
       ? true
       : (await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, resetsAtMs)).shouldFallback;
 

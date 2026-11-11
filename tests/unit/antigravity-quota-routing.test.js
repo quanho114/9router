@@ -481,4 +481,57 @@ describe("Antigravity quota-aware routing", () => {
       vi.useRealTimers();
     }
   });
+
+  it("clears all model strike blocks for a connection when model is omitted", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-26T00:00:00.000Z"));
+    mocks.getAntigravityUsage.mockResolvedValue({
+      quotas: {
+        "gemini-4-argon-high": { remainingPercentage: 90, resetAt: FUTURE_RESET },
+        "gemini-4-argon-medium": { remainingPercentage: 90, resetAt: FUTURE_RESET },
+      },
+    });
+
+    try {
+      for (let i = 0; i < 3; i++) {
+        await handleAntigravityQuotaError("ag-all", 429, "gemini-4-argon-high", "token", {});
+        await handleAntigravityQuotaError("ag-all", 429, "gemini-4-argon-medium", "token", {});
+      }
+      expect(getAntigravityQuotaCache().get("ag-all")?.["gemini-4-argon-high"]?.remainingPercentage).toBe(0);
+      expect(getAntigravityQuotaCache().get("ag-all")?.["gemini-4-argon-medium"]?.remainingPercentage).toBe(0);
+
+      clearAntigravityStrikes("ag-all");
+      expect(getAntigravityQuotaCache().get("ag-all")?.["gemini-4-argon-high"]).toBeUndefined();
+      expect(getAntigravityQuotaCache().get("ag-all")?.["gemini-4-argon-medium"]).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores stale multi-hour DB modelLock_* (>5m) on Antigravity while honoring short backoff locks", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-26T00:00:00.000Z"));
+    mocks.getProviderConnections.mockResolvedValue([
+      {
+        id: "ag-short-lock",
+        email: "short@example.com",
+        isActive: true,
+        "modelLock_gemini-4-argon-medium": "2026-08-26T00:02:00.000Z", // 2m backoff lock
+      },
+      {
+        id: "ag-stale-lock",
+        email: "stale@example.com",
+        isActive: true,
+        "modelLock_gemini-4-argon-medium": "2026-08-28T00:00:00.000Z", // 48h stale resetsAtMs lock
+      },
+    ]);
+
+    try {
+      const creds = await getProviderCredentials("antigravity", null, "gemini-4-argon-medium");
+      expect(creds.connectionId).toBe("ag-stale-lock");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
+

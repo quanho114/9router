@@ -1,10 +1,20 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
-import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
+import { BACKOFF_CONFIG, MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache, getAntigravityModelQuota } from "./antigravityQuota.js";
 import * as log from "../utils/logger.js";
+
+function isConnectionModelLocked(connection, model, isAntigravity = false) {
+  if (!isModelLockActive(connection, model)) return false;
+  if (!isAntigravity) return true;
+  const key = model ? `modelLock_${model}` : "modelLock___all";
+  const expiry = connection[key] || connection.modelLock___all;
+  // Real Antigravity quota exhaustion lives in RAM (antigravityQuotaCache).
+  // Any DB modelLock_* exceeding BACKOFF_CONFIG.max (5m) is a stale resetsAtMs lock.
+  return new Date(expiry).getTime() - Date.now() <= BACKOFF_CONFIG.max;
+}
 
 // Mutex to prevent race conditions during account selection
 let selectionMutex = Promise.resolve();
@@ -86,7 +96,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Filter out model-locked, excluded, and Antigravity quota-exhausted connections.
     const availableConnections = connections.filter(c => {
       if (excludeSet.has(c.id)) return false;
-      if (isModelLockActive(c, model)) return false;
+      if (isConnectionModelLocked(c, model, isAntigravity)) return false;
       const enabled = c.providerSpecificData?.enabledModels;
       if (providerId === "codex" && Array.isArray(enabled) && enabled.length && requestedModel && !enabled.includes(requestedModel)) return false;
       // Antigravity: skip if live quota exhausted for this model
@@ -105,7 +115,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length}`);
     connections.forEach(c => {
       const excluded = excludeSet.has(c.id);
-      const locked = isModelLockActive(c, model);
+      const locked = isConnectionModelLocked(c, model, isAntigravity);
       if (excluded || locked) {
         const lockUntil = getEarliestModelLockUntil(c);
         log.debug("AUTH", `  → ${c.id?.slice(0, 8)} | ${excluded ? "excluded" : ""} ${locked ? `modelLocked(${model}) until ${lockUntil}` : ""}`);
@@ -114,7 +124,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     if (availableConnections.length === 0) {
       // Find earliest persistent lock or lazy Antigravity quota-cache reset for retry timing.
-      const lockedConns = connections.filter(c => isModelLockActive(c, model));
+      const lockedConns = connections.filter(c => isConnectionModelLocked(c, model, isAntigravity));
       const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
       const unsupportedExpiries = [];
       if (isAntigravity && model && antigravityQuotaCache) {
@@ -268,9 +278,8 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     newBackoffLevel = 0;
   } else if (resetsAtMs && resetsAtMs > Date.now()) {
     shouldFallback = true;
-    // Antigravity quota API provides exact per-model resetAt. Do not truncate it.
     cooldownMs = resolveProviderId(provider) === "antigravity"
-      ? resetsAtMs - Date.now()
+      ? Math.min(resetsAtMs - Date.now(), BACKOFF_CONFIG.max)
       : Math.min(resetsAtMs - Date.now(), MAX_RATE_LIMIT_COOLDOWN_MS);
     newBackoffLevel = 0;
   } else {
@@ -314,19 +323,22 @@ export async function clearAccountError(connectionId, currentConnection, model =
   if (!connectionId || connectionId === "noauth") return;
   const conn = currentConnection._connection || currentConnection;
   const now = Date.now();
+  const isAntigravity = resolveProviderId(conn.provider) === "antigravity";
   const allLockKeys = Object.keys(conn).filter(k => k.startsWith("modelLock_"));
 
-  if (!conn.testStatus && !conn.lastError && allLockKeys.length === 0) return;
+  if (!conn.testStatus && !conn.lastError && !conn.backoffLevel && allLockKeys.length === 0) return;
 
-  // Keys to clear: current model's lock + all expired locks
+  // Keys to clear: current model's lock + all expired locks (plus stale >5m Antigravity locks)
   const keysToClear = allLockKeys.filter(k => {
     if (model && k === `modelLock_${model}`) return true; // succeeded model
     if (model && k === "modelLock___all") return true;    // account-level lock
     const expiry = conn[k];
-    return expiry && new Date(expiry).getTime() <= now;   // expired
+    if (!expiry) return false;
+    const expiryMs = new Date(expiry).getTime();
+    return expiryMs <= now || (isAntigravity && expiryMs - now > BACKOFF_CONFIG.max);
   });
 
-  if (keysToClear.length === 0 && conn.testStatus !== "unavailable" && !conn.lastError) return;
+  if (keysToClear.length === 0 && conn.testStatus !== "unavailable" && !conn.lastError && !conn.backoffLevel) return;
 
   // Check if any active locks remain after clearing
   const remainingActiveLocks = allLockKeys.filter(k => {
@@ -336,6 +348,7 @@ export async function clearAccountError(connectionId, currentConnection, model =
   });
 
   const clearObj = Object.fromEntries(keysToClear.map(k => [k, null]));
+  clearObj.backoffLevel = 0;
 
   // Only reset error state if no active locks remain
   if (remainingActiveLocks.length === 0) {
@@ -344,7 +357,6 @@ export async function clearAccountError(connectionId, currentConnection, model =
       lastError: null,
       errorCode: null,
       lastErrorAt: null,
-      backoffLevel: 0
     });
   }
 

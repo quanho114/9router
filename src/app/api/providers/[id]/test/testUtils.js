@@ -1,5 +1,6 @@
 import { getProviderConnectionById, updateProviderConnection } from "@/lib/localDb";
 import { buildClearModelLocksUpdate } from "open-sse/services/accountFallback.js";
+import { clearAntigravityStrikes } from "@/sse/services/antigravityQuota.js";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { testProxyUrl } from "@/lib/network/proxyTest";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS } from "@/shared/constants/providers";
@@ -1038,6 +1039,9 @@ export async function testSingleConnection(id) {
   }
 
   await updateProviderConnection(id, updateData);
+  if (result.valid && connection.provider === "antigravity") {
+    clearAntigravityStrikes(id);
+  }
 
   return { valid: result.valid, error: result.error, refreshed: !!result.refreshed, latencyMs, testedAt: new Date().toISOString() };
 }

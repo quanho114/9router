@@ -182,6 +182,27 @@ export function getAntigravityModelQuota(quotas, model) {
  * entry (resetAt == our block deadline); a real upstream 0% reading stays.
  */
 export function clearAntigravityStrikes(connectionId, model) {
+  if (!connectionId) {
+    for (const key of new Set([...strikeCounts.keys(), ...strikeBlocks.keys()])) {
+      const sep = key.indexOf("|");
+      if (sep !== -1 && (!model || key.slice(sep + 1) === model)) {
+        clearAntigravityStrikes(key.slice(0, sep), key.slice(sep + 1));
+      }
+    }
+    return;
+  }
+  if (!model) {
+    const prefix = `${connectionId}|`;
+    for (const key of strikeCounts.keys()) {
+      if (key.startsWith(prefix)) strikeCounts.delete(key);
+    }
+    for (const key of [...strikeBlocks.keys()]) {
+      if (key.startsWith(prefix)) {
+        clearAntigravityStrikes(connectionId, key.slice(prefix.length));
+      }
+    }
+    return;
+  }
   const key = `${connectionId}|${model}`;
   strikeCounts.delete(key);
   const until = strikeBlocks.get(key);

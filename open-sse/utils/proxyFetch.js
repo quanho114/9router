@@ -294,8 +294,14 @@ async function createBypassRequest(parsedUrl, realIP, options) {
     const socket = new net.Socket();
     let req = null;
     let settled = false;
+    const tcpConnectTimer = setTimeout(() => {
+      const timeoutErr = new Error(`TCP connect timeout to ${parsedUrl.hostname} (${realIP})`);
+      timeoutErr.code = "ETIMEDOUT";
+      try { socket.destroy(timeoutErr); } catch {}
+    }, 15_000);
 
     const onAbort = () => {
+      clearTimeout(tcpConnectTimer);
       const abortErr = new Error(options.signal?.reason?.message || "This operation was aborted");
       abortErr.name = "AbortError";
       try { req?.destroy(abortErr); } catch {}
@@ -307,9 +313,13 @@ async function createBypassRequest(parsedUrl, realIP, options) {
     };
 
     options.signal?.addEventListener("abort", onAbort, { once: true });
-    const cleanupAbort = () => options.signal?.removeEventListener("abort", onAbort);
+    const cleanupAbort = () => {
+      clearTimeout(tcpConnectTimer);
+      options.signal?.removeEventListener("abort", onAbort);
+    };
 
     socket.connect(HTTPS_PORT, realIP, () => {
+      clearTimeout(tcpConnectTimer);
       const reqOptions = {
         socket,
         // SNI + cert hostname are validated against the hostname the caller
