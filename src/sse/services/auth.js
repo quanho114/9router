@@ -3,7 +3,7 @@ import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/con
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { BACKOFF_CONFIG, MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
-import { getAntigravityQuotaCache, getAntigravityModelQuota } from "./antigravityQuota.js";
+import { getAntigravityQuotaCache, getAntigravityModelQuota, getPreferredAntigravityAccount } from "./antigravityQuota.js";
 import * as log from "../utils/logger.js";
 
 function isConnectionModelLocked(connection, model, isAntigravity = false) {
@@ -212,8 +212,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         });
       }
     } else {
-      // Default: fill-first (already sorted by priority in getProviderConnections)
-      connection = availableConnections[0];
+      // Default: fill-first (prefer last verified healthy Antigravity account for this model family, else priority order)
+      const preferredAgId = isAntigravity && model ? getPreferredAntigravityAccount(model) : null;
+      connection = (preferredAgId && availableConnections.find((c) => c.id === preferredAgId)) || availableConnections[0];
     }
 
     const resolvedProxy = await resolveConnectionProxyConfig(connection.providerSpecificData || {});

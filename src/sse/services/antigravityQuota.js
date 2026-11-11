@@ -27,6 +27,13 @@ const STRIKE_THRESHOLD = 3;
 const STRIKE_BLOCK_MS = 15 * 60_000;
 const strikeCounts = new Map(); // "connectionId|model" → { count, windowStart (anchored at first strike) }
 const strikeBlocks = new Map(); // "connectionId|model" → blockedUntil ms
+const preferredAccountByFamily = new Map(); // familyOrModel → connectionId (last verified healthy account)
+
+const origClear = quotaCache.clear.bind(quotaCache);
+quotaCache.clear = () => {
+  preferredAccountByFamily.clear();
+  return origClear();
+};
 
 /**
  * Re-apply active strike blocks onto a fresh quotas snapshot so the auth
@@ -346,6 +353,10 @@ export async function handleAntigravityQuotaError(connectionId, status, model, a
       cached[model] = { remainingPercentage: 0, resetAt: new Date(blockedUntil).toISOString() };
       quotaCache.set(connectionId, cached);
       strikeBlocks.set(key, blockedUntil);
+      const familyKey = getAntigravityModelFamily(model) || model;
+      if (preferredAccountByFamily.get(familyKey) === connectionId) {
+        preferredAccountByFamily.delete(familyKey);
+      }
       return blockedUntil;
     }
     return null;
@@ -353,6 +364,10 @@ export async function handleAntigravityQuotaError(connectionId, status, model, a
 
   // Healthy-but-exhausted reading: clear strikes and use the exact resetAt.
   strikeCounts.delete(`${connectionId}|${model}`);
+  const familyKey = getAntigravityModelFamily(model) || model;
+  if (preferredAccountByFamily.get(familyKey) === connectionId) {
+    preferredAccountByFamily.delete(familyKey);
+  }
   if (!quota.resetAt) return null;
 
   const resetMs = new Date(quota.resetAt).getTime();
@@ -387,12 +402,36 @@ export function handleAntigravityStallError(connectionId, status, model, errorTe
   cached[model] = { remainingPercentage: 0, resetAt: iso };
   strikeBlocks.set(`${connectionId}|${model}`, blockedUntil);
 
-  if (getAntigravityModelFamily(model) === "argon") {
+  const family = getAntigravityModelFamily(model);
+  if (family === "argon") {
     cached.argon_session = { remainingPercentage: 0, resetAt: iso };
     strikeBlocks.set(`${connectionId}|argon_session`, blockedUntil);
+  }
+  const familyKey = family || model;
+  if (preferredAccountByFamily.get(familyKey) === connectionId) {
+    preferredAccountByFamily.delete(familyKey);
   }
 
   quotaCache.set(connectionId, cached);
   log.warn("AG_QUOTA", `${connectionId.slice(0, 8)} | STALL_${status} ${model} — connect timeout; CACHE_BLOCK 15m`);
   return blockedUntil;
+}
+
+/**
+ * Record the last verified healthy Antigravity account for a model family so
+ * subsequent requests jump straight to the working account without re-probing.
+ */
+export function recordAntigravityHealthyAccount(connectionId, model) {
+  if (!connectionId || !model) return;
+  const familyKey = getAntigravityModelFamily(model) || model;
+  preferredAccountByFamily.set(familyKey, connectionId);
+}
+
+/**
+ * Get the last verified healthy Antigravity account for a model family.
+ */
+export function getPreferredAntigravityAccount(model) {
+  if (!model) return null;
+  const familyKey = getAntigravityModelFamily(model) || model;
+  return preferredAccountByFamily.get(familyKey) || null;
 }

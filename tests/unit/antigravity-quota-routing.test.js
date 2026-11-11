@@ -27,7 +27,7 @@ vi.mock("open-sse/services/usage/google.js", () => ({
 }));
 vi.mock("@/sse/utils/logger.js", () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }));
 
-const { getAntigravityQuotaCache, getAntigravityModelQuota, handleAntigravityQuotaError, handleAntigravityStallError, refreshAntigravityQuota, clearAntigravityStrikes } = await import("@/sse/services/antigravityQuota.js");
+const { getAntigravityQuotaCache, getAntigravityModelQuota, handleAntigravityQuotaError, handleAntigravityStallError, recordAntigravityHealthyAccount, refreshAntigravityQuota, clearAntigravityStrikes } = await import("@/sse/services/antigravityQuota.js");
 const { getProviderCredentials } = await import("@/sse/services/auth.js");
 
 const MODEL = "claude-opus-4-6-thinking";
@@ -570,6 +570,21 @@ describe("Antigravity quota-aware routing", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("automatically prefers the last verified healthy account for a model family", async () => {
+    mocks.getProviderConnections.mockResolvedValue([
+      { id: "ag-1", email: "one@example.com", priority: 1, isActive: true },
+      { id: "ag-2", email: "two@example.com", priority: 2, isActive: true },
+    ]);
+
+    recordAntigravityHealthyAccount("ag-2", "gemini-4-argon-high");
+    const argonCreds = await getProviderCredentials("antigravity", null, "gemini-4-argon-medium");
+    expect(argonCreds.connectionId).toBe("ag-2");
+
+    // Claude family still uses priority 1 unless recorded otherwise
+    const claudeCreds = await getProviderCredentials("antigravity", null, "claude-sonnet-5-5-medium");
+    expect(claudeCreds.connectionId).toBe("ag-1");
   });
 });
 

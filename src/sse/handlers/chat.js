@@ -10,13 +10,14 @@ import {
 import {
   handleAntigravityQuotaError,
   handleAntigravityStallError,
+  recordAntigravityHealthyAccount,
   clearAntigravityStrikes,
   getAntigravityQuotaCache,
   getAntigravityModelFamily,
   getAntigravityModelQuota,
   refreshAntigravityQuota,
 } from "../services/antigravityQuota.js";
-import { getSettings } from "@/lib/localDb";
+import { getSettings, updateProviderConnection } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
@@ -397,6 +398,12 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         await clearAccountError(credentials.connectionId, credentials, model);
         // "Consecutive" strikes: a success clears the breaker for this pair.
         clearAntigravityStrikes(credentials.connectionId, model);
+        if (provider === "antigravity") {
+          recordAntigravityHealthyAccount(credentials.connectionId, model);
+          if ((credentials._connection?.priority || 1) > 1) {
+            updateProviderConnection(credentials.connectionId, { priority: 1 }).catch(() => {});
+          }
+        }
       }
     });
 
