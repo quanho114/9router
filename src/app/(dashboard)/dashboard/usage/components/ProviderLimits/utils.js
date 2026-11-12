@@ -2,7 +2,7 @@ import { getModelsByProviderId } from "open-sse/config/providerModels.js";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 export const QUOTA_CACHE_KEY = "quotaCacheData";
-export const REFRESH_INTERVAL_MS = 3000;
+export const REFRESH_INTERVAL_MS = 2000;
 // Claude usage/quota endpoint rate-limits; poll it less often than other providers
 export const CLAUDE_REFRESH_INTERVAL_MS = 600000;
 export const DEPLETED_QUOTA_THRESHOLD = 5;
@@ -307,7 +307,16 @@ export function calculatePercentage(used, total) {
   if (!used || used < 0) return 100;
   if (used >= total) return 0;
 
-  return Math.round(((total - used) / total) * 100);
+  return normalizeQuotaPercentage(((total - used) / total) * 100);
+}
+
+// Retain tenths and reserve 0/100 for genuinely empty/full quota readings.
+export function normalizeQuotaPercentage(value) {
+  const percentage = Number(value);
+  if (!Number.isFinite(percentage)) return 0;
+  if (percentage <= 0) return 0;
+  if (percentage >= 100) return 100;
+  return Math.min(99.9, Math.max(0.1, Math.round(percentage * 10) / 10));
 }
 
 /**
@@ -319,15 +328,15 @@ export function getRemainingPercentage(quota) {
   if (quota?.percentage !== undefined) {
     // Providers may report the used share; the UI renders the remaining one.
     const value = quota.percentageIsUsed === true ? 100 - quota.percentage : quota.percentage;
-    return Math.max(0, Math.round(value));
+    return normalizeQuotaPercentage(value);
   }
 
   if (quota?.remaining !== undefined) {
-    return Math.max(0, Math.round(quota.remaining));
+    return normalizeQuotaPercentage(quota.remaining);
   }
 
   if (quota?.remainingPercentage !== undefined) {
-    return Math.round(quota.remainingPercentage);
+    return normalizeQuotaPercentage(quota.remainingPercentage);
   }
 
   return calculatePercentage(quota?.used, quota?.total);
@@ -336,6 +345,27 @@ export function getRemainingPercentage(quota) {
 export function getQuotaVisibilityKey(quota) {
   if (!quota || typeof quota !== "object") return "";
   return String(quota.modelKey || quota.name || "").trim();
+}
+
+// Antigravity replicas may briefly return an older, higher balance. Within a
+// known active reset window retain the most consumed reading. Never carry it
+// into a different window, changed allowance, or a non-recurring credit pack.
+export function reconcileAntigravityQuotaReadings(previous = [], incoming = [], now = Date.now()) {
+  const byKey = new Map(previous.map((row) => [getQuotaVisibilityKey(row), row]));
+  return incoming.map((row) => {
+    const prior = byKey.get(getQuotaVisibilityKey(row));
+    if (!prior || row.recurring === false || row.total !== prior.total ||
+        !row.resetAt || row.resetAt !== prior.resetAt ||
+        !(Date.parse(row.resetAt) > now) ||
+        getRemainingPercentage(row) <= getRemainingPercentage(prior)) return row;
+    return {
+      ...row,
+      used: prior.used,
+      remainingPercentage: prior.remainingPercentage,
+      percentage: prior.percentage,
+      remaining: prior.remaining,
+    };
+  });
 }
 
 /**

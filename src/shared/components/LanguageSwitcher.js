@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { LOCALES, LOCALE_COOKIE, normalizeLocale } from "@/i18n/config";
-import { reloadTranslations } from "@/i18n/runtime";
+import { LOCALES, LOCALE_NAMES, LOCALE_COOKIE, normalizeLocale } from "@/i18n/config";
+import { LOCALE_FLAGS } from "@/shared/constants/locales";
+import { translate, reloadTranslations } from "@/i18n/runtime";
 
 function getLocaleFromCookie() {
   if (typeof document === "undefined") return "en";
@@ -14,49 +15,9 @@ function getLocaleFromCookie() {
   return normalizeLocale(value);
 }
 
-// Locale display names and flags - will be translated by runtime i18n
-const getLocaleInfo = (locale) => {
-  const locales = {
-    "en": { name: "English", flag: "🇺🇸" },
-    "vi": { name: "Tiếng Việt", flag: "🇻🇳" },
-    "zh-CN": { name: "简体中文", flag: "🇨🇳" },
-    "zh-TW": { name: "繁體中文", flag: "🇹🇼" },
-    "ja": { name: "日本語", flag: "🇯🇵" },
-    "pt-BR": { name: "Português (Brasil)", flag: "🇧🇷" },
-    "pt-PT": { name: "Português (Portugal)", flag: "🇵🇹" },
-    "ko": { name: "한국어", flag: "🇰🇷" },
-    "es": { name: "Español", flag: "🇪🇸" },
-    "de": { name: "Deutsch", flag: "🇩🇪" },
-    "fr": { name: "Français", flag: "🇫🇷" },
-    "he": { name: "עברית", flag: "🇮🇱" },
-    "ar": { name: "العربية", flag: "🇸🇦" },
-    "ru": { name: "Русский", flag: "🇷🇺" },
-    "pl": { name: "Polski", flag: "🇵🇱" },
-    "cs": { name: "Čeština", flag: "🇨🇿" },
-    "nl": { name: "Nederlands", flag: "🇳🇱" },
-    "tr": { name: "Türkçe", flag: "🇹🇷" },
-    "uk": { name: "Українська", flag: "🇺🇦" },
-    "tl": { name: "Tagalog", flag: "🇵🇭" },
-    "id": { name: "Indonesia", flag: "🇮🇩" },
-    "th": { name: "ไทย", flag: "🇹🇭" },
-    "km": { name: "ខ្មែរ", flag: "🇰🇭" },
-    "hi": { name: "हिन्दी", flag: "🇮🇳" },
-    "bn": { name: "বাংলা", flag: "🇧🇩" },
-    "ur": { name: "اردو", flag: "🇵🇰" },
-    "ro": { name: "Română", flag: "🇷🇴" },
-    "sv": { name: "Svenska", flag: "🇸🇪" },
-    "it": { name: "Italiano", flag: "🇮🇹" },
-    "el": { name: "Ελληνικά", flag: "🇬🇷" },
-    "hu": { name: "Magyar", flag: "🇭🇺" },
-    "fi": { name: "Suomi", flag: "🇫🇮" },
-    "da": { name: "Dansk", flag: "🇩🇰" },
-    "no": { name: "Norsk", flag: "🇳🇴" },
-    "fa": { name: "فارسی", flag: "🇮🇷" }
-  };
-  return locales[locale] || { name: locale, flag: "🌐" };
-};
+const getLocaleInfo = (locale) => ({ name: LOCALE_NAMES[locale], flag: LOCALE_FLAGS[locale] });
 
-export default function LanguageSwitcher({ className = "", isOpen: controlledOpen, onClose, hideTrigger = false }) {
+export default function LanguageSwitcher({ className = "", isOpen: controlledOpen, onClose, hideTrigger = false, anchorRef, anchorPosition }) {
   const [locale, setLocale] = useState("en");
   const [isPending, setIsPending] = useState(false);
   const [internalOpen, setInternalOpen] = useState(false);
@@ -64,22 +25,23 @@ export default function LanguageSwitcher({ className = "", isOpen: controlledOpe
 
   const isControlled = typeof controlledOpen === "boolean";
   const isOpen = isControlled ? controlledOpen : internalOpen;
-  const setIsOpen = (value, nextLocale = locale) => {
+  const setIsOpen = useCallback((value, nextLocale = locale) => {
     if (isControlled) {
       if (!value && onClose) onClose(nextLocale);
     } else {
       setInternalOpen(value);
     }
-  };
+  }, [isControlled, locale, onClose]);
 
   useEffect(() => {
-    setLocale(getLocaleFromCookie());
+    const timer = setTimeout(() => setLocale(getLocaleFromCookie()), 0);
+    return () => clearTimeout(timer);
   }, []);
 
   // Close modal when clicking outside
   useEffect(() => {
     function handleClickOutside(event) {
-      if (modalRef.current && !modalRef.current.contains(event.target)) {
+      if (modalRef.current && !modalRef.current.contains(event.target) && !anchorRef?.current?.contains(event.target)) {
         setIsOpen(false);
       }
     }
@@ -87,29 +49,56 @@ export default function LanguageSwitcher({ className = "", isOpen: controlledOpe
       document.addEventListener("mousedown", handleClickOutside);
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
-  }, [isOpen]);
+  }, [isOpen, setIsOpen, anchorRef]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+        anchorRef?.current?.focus();
+      }
+    };
+    const closeOnResize = () => setIsOpen(false);
+    document.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", closeOnResize);
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", closeOnResize);
+    };
+  }, [isOpen, setIsOpen, anchorRef]);
 
   const handleSetLocale = async (nextLocale) => {
-    if (nextLocale === locale || isPending) return;
+    if (isPending) return;
+    if (nextLocale === locale) {
+      setIsOpen(false);
+      anchorRef?.current?.focus();
+      return;
+    }
 
     setIsPending(true);
     try {
-      await fetch("/api/locale", {
+      const response = await fetch("/api/locale", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ locale: nextLocale }),
       });
       
+      if (!response.ok) throw new Error("Failed to change language");
       // Reload translations without full page reload
       await reloadTranslations();
       setLocale(nextLocale);
       setIsOpen(false, nextLocale);
+      anchorRef?.current?.focus();
     } catch (err) {
       console.error("Failed to set locale:", err);
     } finally {
       setIsPending(false);
     }
   };
+
+  const anchor = anchorPosition;
+  const dropdownStyle = anchorPosition || undefined;
 
   return (
     <div className={className}>
@@ -130,54 +119,59 @@ export default function LanguageSwitcher({ className = "", isOpen: controlledOpe
 
       {/* Portal modal - renders at document.body to avoid parent layout constraints */}
       {isOpen && createPortal(
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" data-i18n-skip="true">
+        <div className={anchor ? "fixed z-50" : "fixed inset-0 z-50 flex items-center justify-center p-4"} style={dropdownStyle} data-i18n-skip="true">
           {/* Overlay */}
-          <div
+          {!anchor && <div
             className="absolute inset-0 bg-black/30 backdrop-blur-sm"
             onClick={() => setIsOpen(false)}
-          />
+          />}
 
           {/* Modal content */}
           <div
             ref={modalRef}
-            className="relative w-full bg-surface border border-black/10 dark:border-white/10 rounded-xl shadow-2xl animate-in fade-in zoom-in-95 duration-200 max-w-2xl flex flex-col max-h-[80vh]"
+            role="dialog"
+            aria-modal={anchor ? undefined : true}
+            aria-labelledby="language-dialog-title"
+            className="relative w-full bg-[#fafaf9] dark:bg-[#0a0a0a] border border-black/10 dark:border-white/15 rounded-[24px] shadow-2xl animate-in fade-in zoom-in-95 duration-200 max-w-sm flex flex-col max-h-[80vh] overflow-hidden"
           >
             {/* Modal header */}
-            <div className="flex items-center justify-between p-3 border-b border-black/5 dark:border-white/5">
-              <h2 className="text-lg font-semibold text-text-main">Select Language</h2>
+            <div className="flex items-center justify-between px-5 pt-5 pb-3">
+              <h2 id="language-dialog-title" className="text-base font-semibold tracking-tight text-text-main">{translate("Select Language")}</h2>
               <button
+                type="button"
                 onClick={() => setIsOpen(false)}
                 className="p-1.5 rounded-lg text-text-muted hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                aria-label="Close"
+                aria-label={translate("Close")}
               >
                 <span className="material-symbols-outlined text-[20px]">close</span>
               </button>
             </div>
 
-            {/* Modal body - fixed grid columns, equal sizing */}
-            <div className="p-6 overflow-y-auto flex-1">
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(100px,1fr))] gap-2">
+            <div className="px-3 pb-3 overflow-y-auto flex-1">
+              <div className="flex flex-col gap-1">
                 {LOCALES.map((item) => {
                   const active = locale === item;
                   const info = getLocaleInfo(item);
                   return (
                     <button
                       key={item}
+                      type="button"
+                      autoFocus={active}
                       onClick={() => handleSetLocale(item)}
                       disabled={isPending}
-                      className={`flex flex-col items-center justify-start gap-1 px-2 py-3 rounded-lg text-xs font-medium transition-colors w-full ${
+                      aria-pressed={active}
+                      className={`flex items-center gap-3 px-3 py-3 rounded-[14px] text-sm font-medium transition-colors w-full text-left focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-primary ${
                         active
-                          ? "bg-primary/15 text-primary ring-2 ring-primary"
+                          ? "bg-black/[0.06] dark:bg-white/[0.09] text-text-main"
                           : "text-text-main hover:bg-black/5 dark:hover:bg-white/5"
                       } ${isPending ? "opacity-70 cursor-wait" : ""}`}
                       title={info.name}
                     >
-                      <span className="text-2xl">{info.flag}</span>
-                      {/* Fixed 2-line height so all cards are uniform */}
-                      <span className="text-center leading-tight line-clamp-2 h-8 flex items-center">{info.name}</span>
-                      {active && (
-                        <span className="material-symbols-outlined text-sm">check</span>
-                      )}
+                      <span className="flex size-10 shrink-0 items-center justify-center rounded-[10px] border border-black/[0.07] dark:border-white/10 bg-white dark:bg-[#171717] text-xs font-semibold tracking-wide text-text-muted">{info.flag}</span>
+                      <span lang={item} className="flex-1 leading-snug">{info.name}</span>
+                      <span className={`flex size-6 shrink-0 items-center justify-center rounded-full ${active ? "bg-text-main text-bg" : "text-transparent"}`} aria-hidden="true">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m3.5 8 3 3 6-6" /></svg>
+                      </span>
                     </button>
                   );
                 })}

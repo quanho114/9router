@@ -53,8 +53,11 @@ export default function Modal({
 
       {/* Modal content */}
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={typeof title === "string" ? title : undefined}
         className={cn(
-          "relative w-full bg-surface shadow-[var(--shadow-elev)]",
+          "app-dialog-surface relative w-full shadow-[var(--shadow-elev)]",
           "border border-border-subtle",
           "rounded-[28px]",
           "fade-in",
@@ -64,7 +67,7 @@ export default function Modal({
       >
         {/* Header */}
         {(title || showTrafficLights) && (
-          <div className="flex items-center justify-between p-2 border-b border-border-subtle">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
             <div className="flex items-center">
               {/* Traffic lights — desktop only */}
               {showTrafficLights && (

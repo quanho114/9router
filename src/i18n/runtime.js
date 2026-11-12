@@ -18,13 +18,9 @@ function getLocaleFromCookie() {
 
 // Load translation map
 async function loadTranslations(locale) {
-  if (locale === "en") {
-    translationMap = {};
-    return;
-  }
-  
   try {
     const response = await fetch(`/i18n/literals/${locale}.json`);
+    if (!response.ok) throw new Error(`Translation load failed: ${response.status}`);
     translationMap = await response.json();
   } catch (err) {
     console.error("Failed to load translations:", err);
@@ -37,8 +33,22 @@ export function translate(text) {
   if (!text || typeof text !== "string") return text;
   const trimmed = text.trim();
   if (!trimmed) return text;
-  if (currentLocale === "en") return text;
-  return translationMap[trimmed] || text;
+  let translated = translationMap[trimmed];
+  if (!translated) {
+    // Preserve changing counts and dates rather than translating user data.
+    const dynamic = trimmed.match(/^(∞\s+|•\s+)?(Connected|Created|Tạo ngày|Unlimited|Không giới hạn)(\s+.*)?$/);
+    const count = trimmed.match(/^(\d+) (Connected)$/);
+    if (dynamic && translationMap[dynamic[2]]) {
+      translated = `${dynamic[1] || ""}${translationMap[dynamic[2]]}${dynamic[3] || ""}`;
+    } else if (count && translationMap[count[2]]) {
+      translated = `${count[1]} ${translationMap[count[2]]}`;
+    }
+    if (!translated) {
+      const label = trimmed.match(/^(Detected models|Select all|Selected:|Key settings:)(.*)$/);
+      if (label && translationMap[label[1]]) translated = translationMap[label[1]] + label[2];
+    }
+  }
+  return translated ? text.replace(trimmed, translated) : text;
 }
 
 // Get current locale - exported for use in components
@@ -125,6 +135,25 @@ function processElement(element) {
   
   // Process collected nodes
   nodesToProcess.forEach(processTextNode);
+  processAttributes(element);
+  element.querySelectorAll?.("[title], [placeholder], [aria-label]").forEach(processAttributes);
+}
+
+// Translate interface labels too; retain originals across locale switches.
+const originalAttributes = new WeakMap();
+function processAttributes(element) {
+  if (!element.getAttribute || element.closest?.("[data-i18n-skip]")) return;
+  const originals = originalAttributes.get(element) || {};
+  for (const name of ["title", "placeholder", "aria-label"]) {
+    const value = element.getAttribute(name);
+    if (!value) continue;
+    const previous = originals[name];
+    const source = previous && value === previous.translated ? previous.source : value;
+    const translated = translate(source);
+    originals[name] = { source, translated };
+    if (value !== translated) element.setAttribute(name, translated);
+  }
+  originalAttributes.set(element, originals);
 }
 
 // Initialize runtime i18n
@@ -143,6 +172,10 @@ export async function initRuntimeI18n() {
   // untranslated.
   const observer = new MutationObserver((mutations) => {
     mutations.forEach((mutation) => {
+      if (mutation.type === "attributes") {
+        processAttributes(mutation.target);
+        return;
+      }
       if (mutation.type === "characterData") {
         processTextNode(mutation.target);
         return;
@@ -161,6 +194,8 @@ export async function initRuntimeI18n() {
     childList: true,
     subtree: true,
     characterData: true,
+    attributes: true,
+    attributeFilter: ["title", "placeholder", "aria-label"],
   });
 }
 

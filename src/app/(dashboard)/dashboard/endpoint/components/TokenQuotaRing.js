@@ -28,9 +28,7 @@ export default function TokenQuotaRing({
   const strokeWidth = 5;
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
-  const dashOffset = hasLimit
-    ? circumference - (clampedPct / 100) * circumference
-    : circumference * 0.72;
+  const dashOffset = circumference - (clampedPct / 100) * circumference;
 
   let strokeColor = accent === "violet" ? "#8b5cf6" : "#06b6d4";
   if (isExhausted) strokeColor = "#ef4444";
@@ -58,6 +56,7 @@ export default function TokenQuotaRing({
             strokeWidth={strokeWidth}
             className="text-black/[0.08] dark:text-white/[0.1]"
           />
+          {hasLimit && clampedPct > 0 && (
           <circle
             cx={size / 2}
             cy={size / 2}
@@ -70,6 +69,7 @@ export default function TokenQuotaRing({
             strokeLinecap="round"
             style={{ transition: "stroke-dashoffset 0.35s ease, stroke 0.25s ease" }}
           />
+          )}
         </svg>
         <div className="absolute inset-0 flex items-center justify-center">
           {hasLimit ? (

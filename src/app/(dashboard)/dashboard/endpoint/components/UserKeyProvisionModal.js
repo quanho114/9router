@@ -38,7 +38,7 @@ const INPUT_TOKEN_PRESETS = [
   { label: "5M", value: 5_000_000 },
   { label: "10M", value: 10_000_000 },
   { label: "50M", value: 50_000_000 },
-  { label: "∞ Không giới hạn", value: 0 },
+  { label: "∞ Unlimited", value: 0 },
 ];
 
 const OUTPUT_TOKEN_PRESETS = [
@@ -48,15 +48,15 @@ const OUTPUT_TOKEN_PRESETS = [
   { label: "1M", value: 1_000_000 },
   { label: "5M", value: 5_000_000 },
   { label: "10M", value: 10_000_000 },
-  { label: "∞ Không giới hạn", value: 0 },
+  { label: "∞ Unlimited", value: 0 },
 ];
 
 const EXPIRY_PRESETS = [
-  { label: "+1 ngày", days: 1 },
-  { label: "+7 ngày", days: 7 },
-  { label: "+30 ngày", days: 30 },
-  { label: "+90 ngày", days: 90 },
-  { label: "+365 ngày", days: 365 },
+  { label: "+1 days", days: 1 },
+  { label: "+7 days", days: 7 },
+  { label: "+30 days", days: 30 },
+  { label: "+90 days", days: 90 },
+  { label: "+365 days", days: 365 },
 ];
 
 function toDatetimeLocalValue(isoString) {
@@ -387,23 +387,23 @@ export default function UserKeyProvisionModal({
   const handleSubmit = async () => {
     setErrorMsg("");
     if (!name.trim()) {
-      setErrorMsg("Vui lòng nhập tên API Key.");
+      setErrorMsg("Enter an API key name.");
       return;
     }
     if (restricted && selectedModels.length === 0) {
-      setErrorMsg("Vui lòng tick chọn ít nhất 1 model (hoặc tắt giới hạn model).");
+      setErrorMsg("Select at least one model or disable model restrictions.");
       return;
     }
 
     let expiresAtIso = null;
     if (!noDate) {
       if (!expiresAtInput) {
-        setErrorMsg("Vui lòng chọn ngày hết hạn hoặc bật chế độ No Date.");
+        setErrorMsg("Set an expiration date or choose no expiration.");
         return;
       }
       const parsed = new Date(expiresAtInput);
       if (Number.isNaN(parsed.getTime())) {
-        setErrorMsg("Định dạng ngày hết hạn không hợp lệ.");
+        setErrorMsg("Invalid expiration date.");
         return;
       }
       expiresAtIso = parsed.toISOString();
@@ -431,7 +431,7 @@ export default function UserKeyProvisionModal({
         setErrorMsg(result.error);
       }
     } catch (err) {
-      setErrorMsg(err?.message || "Có lỗi xảy ra khi lưu API Key.");
+      setErrorMsg(err?.message || "Failed to save API key.");
     } finally {
       setSubmitting(false);
     }
@@ -440,7 +440,7 @@ export default function UserKeyProvisionModal({
   return (
     <Modal
       isOpen={isOpen}
-      title={isEdit ? `Cấu hình Key: ${initialKey?.name}` : "Cấp API Key mới cho User"}
+      title={isEdit ? `Key settings: ${initialKey?.name}` : "Create user API key"}
       onClose={onClose}
       size="xl"
     >
@@ -448,10 +448,10 @@ export default function UserKeyProvisionModal({
         {/* 1. Key Name */}
         <div>
           <Input
-            label="Tên Key / Tên User"
+            label="Key name / User name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="VD: User Minh - Gói 5M Token"
+            placeholder="e.g. Minh - 5M token plan"
           />
         </div>
 
@@ -464,17 +464,17 @@ export default function UserKeyProvisionModal({
                   checklist
                 </span>
                 <p className="text-sm font-semibold text-text-main">
-                  Danh sách Model hệ thống phát hiện ({totalDetectedCount})
+                  Detected models ({totalDetectedCount})
                 </p>
               </div>
               <p className="text-xs text-text-muted mt-0.5">
-                Tick chọn từng model cụ thể mà key của user này được phép gọi
+                Select the models this user key can access
               </p>
             </div>
             <Toggle
               size="sm"
               checked={restricted}
-              label={restricted ? "Giới hạn theo model đã tick" : "Cho phép mọi model"}
+              label={restricted ? "Restrict to selected models" : "Allow all models"}
               onChange={(checked) => setRestricted(checked)}
             />
           </div>
@@ -491,7 +491,7 @@ export default function UserKeyProvisionModal({
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Tìm model hoặc provider (vd: claude, gemini, gpt-5, ag/)..."
+                    placeholder="Search models or providers..."
                     className="w-full rounded-lg border border-border bg-input pl-8 pr-3 py-1.5 text-xs text-text-main focus:outline-none focus:border-primary"
                   />
                 </div>
@@ -500,17 +500,17 @@ export default function UserKeyProvisionModal({
                   onClick={selectAllVisible}
                   className="rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 transition-colors"
                 >
-                  Chọn tất cả ({visibleModelValues.length})
+                  Select all ({visibleModelValues.length})
                 </button>
                 <button
                   type="button"
                   onClick={clearAllSelected}
                   className="rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-text-muted hover:text-red-500 hover:border-red-500/40 transition-colors"
                 >
-                  Bỏ chọn hết
+                  Clear selection
                 </button>
                 <span className="rounded-lg bg-primary/10 px-2.5 py-1.5 font-mono text-xs font-semibold text-primary">
-                  Đã chọn: {selectedModels.length}
+                  Selected: {selectedModels.length}
                 </span>
               </div>
 
@@ -521,11 +521,11 @@ export default function UserKeyProvisionModal({
                     <span className="material-symbols-outlined animate-spin text-sm">
                       progress_activity
                     </span>
-                    Đang quét danh sách model từ các provider đang kết nối...
+                    Scanning models from connected providers...
                   </div>
                 ) : filteredGroups.length === 0 ? (
                   <div className="py-8 text-center text-xs text-text-muted">
-                    Không tìm thấy model nào khớp với từ khóa.
+                    No models match your search.
                   </div>
                 ) : (
                   filteredGroups.map((group) => {
@@ -576,7 +576,7 @@ export default function UserKeyProvisionModal({
                             type="button"
                             onClick={() => toggleCollapseGroup(group.key)}
                             className="p-1 text-text-muted hover:text-text-main rounded"
-                            title={isCollapsed ? "Mở rộng" : "Thu gọn"}
+                            title={isCollapsed ? "Expand" : "Collapse"}
                           >
                             <span className="material-symbols-outlined text-[16px]">
                               {isCollapsed ? "expand_more" : "expand_less"}
@@ -633,11 +633,11 @@ export default function UserKeyProvisionModal({
               data_usage
             </span>
             <p className="text-sm font-semibold text-text-main">
-              Giới hạn Quota Token (Gói cố định Input / Output)
+              Token limits (input / output)
             </p>
           </div>
           <p className="text-xs text-text-muted mb-3">
-            User sử dụng hết hạn mức Input hoặc Output được cấp sẽ tự động dừng (đặt = 0 nếu không giới hạn).
+            Access stops when either token limit is reached. Set 0 for unlimited.
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -645,12 +645,12 @@ export default function UserKeyProvisionModal({
             <div className="rounded-lg border border-border p-3 bg-background/40">
               <div className="flex items-center justify-between gap-2 mb-1.5">
                 <label className="text-xs font-semibold text-cyan-500 uppercase tracking-wider whitespace-nowrap">
-                  Input Token Tối Đa
+                  Maximum input tokens
                 </label>
                 <span className="font-mono text-xs font-semibold text-text-main whitespace-nowrap">
                   {Number(maxInputTokens) > 0
                     ? `${formatTokenCompact(maxInputTokens)} tokens`
-                    : "∞ Không giới hạn"}
+                    : "∞ Unlimited"}
                 </span>
               </div>
               <input
@@ -660,7 +660,7 @@ export default function UserKeyProvisionModal({
                 value={maxInputTokens}
                 onChange={(e) => setMaxInputTokens(Math.max(0, Number(e.target.value) || 0))}
                 className="w-full rounded-lg border border-border bg-input px-3 py-1.5 font-mono text-sm text-text-main focus:outline-none focus:border-primary mb-2"
-                placeholder="0 = Không giới hạn"
+                placeholder="0 = Unlimited"
               />
               <div className="flex flex-wrap gap-1">
                 {INPUT_TOKEN_PRESETS.map((preset) => (
@@ -684,12 +684,12 @@ export default function UserKeyProvisionModal({
             <div className="rounded-lg border border-border p-3 bg-background/40">
               <div className="flex items-center justify-between gap-2 mb-1.5">
                 <label className="text-xs font-semibold text-violet-500 uppercase tracking-wider whitespace-nowrap">
-                  Output Token Tối Đa
+                  Maximum output tokens
                 </label>
                 <span className="font-mono text-xs font-semibold text-text-main whitespace-nowrap">
                   {Number(maxOutputTokens) > 0
                     ? `${formatTokenCompact(maxOutputTokens)} tokens`
-                    : "∞ Không giới hạn"}
+                    : "∞ Unlimited"}
                 </span>
               </div>
               <input
@@ -699,7 +699,7 @@ export default function UserKeyProvisionModal({
                 value={maxOutputTokens}
                 onChange={(e) => setMaxOutputTokens(Math.max(0, Number(e.target.value) || 0))}
                 className="w-full rounded-lg border border-border bg-input px-3 py-1.5 font-mono text-sm text-text-main focus:outline-none focus:border-primary mb-2"
-                placeholder="0 = Không giới hạn"
+                placeholder="0 = Unlimited"
               />
               <div className="flex flex-wrap gap-1">
                 {OUTPUT_TOKEN_PRESETS.map((preset) => (
@@ -723,7 +723,7 @@ export default function UserKeyProvisionModal({
           {isEdit && (
             <div className="mt-3 pt-3 border-t border-border flex flex-wrap items-center justify-between gap-2">
               <div className="text-xs text-text-muted font-mono">
-                Đã dùng:{" "}
+                Used:{" "}
                 <strong className="text-text-main">
                   {(initialKey?.usedInputTokens || 0).toLocaleString("en-US")}
                 </strong>{" "}
@@ -740,7 +740,7 @@ export default function UserKeyProvisionModal({
                   onChange={(e) => setResetUsage(e.target.checked)}
                   className="h-3.5 w-3.5 rounded border-border accent-amber-500"
                 />
-                Reset bộ đếm token đã dùng về 0 khi lưu
+                Reset token usage to 0 when saving
               </label>
             </div>
           )}
@@ -755,11 +755,11 @@ export default function UserKeyProvisionModal({
                   event_available
                 </span>
                 <p className="text-sm font-semibold text-text-main">
-                  Thời hạn sử dụng (Ngày hết hạn / No Date)
+                  Expiration
                 </p>
               </div>
               <p className="text-xs text-text-muted mt-0.5">
-                Chọn No Date để không giới hạn ngày (vẫn dừng ngay khi dùng hết gói token)
+                Choose no expiration to remove the date limit. Token limits still apply.
               </p>
             </div>
             <div className="flex items-center gap-1.5 rounded-lg border border-border p-1 bg-background/60">
@@ -772,7 +772,7 @@ export default function UserKeyProvisionModal({
                     : "text-text-muted hover:text-text-main"
                 }`}
               >
-                No Date (Không thời hạn)
+                No expiration
               </button>
               <button
                 type="button"
@@ -786,7 +786,7 @@ export default function UserKeyProvisionModal({
                     : "text-text-muted hover:text-text-main"
                 }`}
               >
-                Giới hạn ngày
+                Set expiration
               </button>
             </div>
           </div>
@@ -831,13 +831,13 @@ export default function UserKeyProvisionModal({
             icon={isEdit ? "save" : "vpn_key"}
           >
             {submitting
-              ? "Đang xử lý..."
+              ? "Processing..."
               : isEdit
-              ? "Lưu cấu hình Key"
+              ? "Save key settings"
               : "Generate Key"}
           </Button>
           <Button onClick={onClose} variant="ghost" fullWidth disabled={submitting}>
-            Hủy
+            Cancel
           </Button>
         </div>
       </div>

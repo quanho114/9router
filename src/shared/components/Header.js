@@ -8,7 +8,6 @@ import ProviderIcon from "@/shared/components/ProviderIcon";
 import HeaderMenu from "@/shared/components/HeaderMenu";
 import HeaderLanguage from "@/shared/components/HeaderLanguage";
 import ThemeToggle from "@/shared/components/ThemeToggle";
-import DonateModal from "@/shared/components/DonateModal";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { MEDIA_PROVIDER_KINDS, AI_PROVIDERS } from "@/shared/constants/providers";
@@ -179,12 +178,11 @@ const getPageInfo = (pathname) => {
   return { title: "", description: "", breadcrumbs: [] };
 };
 
-export default function Header({ onMenuClick, showMenuButton = true, activePathname }) {
+export default function Header({ onMenuClick, showMenuButton = true, activePathname, sidebarCollapsed = false, onSidebarToggle, mobileSidebarOpen = false }) {
   const routerPathname = usePathname();
   const pathname = activePathname || routerPathname;
   const [displayName, setDisplayName] = useState("");
   const [loginMethod, setLoginMethod] = useState("");
-  const [donateOpen, setDonateOpen] = useState(false);
 
   // Memoize page info to prevent unnecessary recalculations
   const pageInfo = useMemo(() => getPageInfo(pathname), [pathname]);
@@ -233,13 +231,35 @@ export default function Header({ onMenuClick, showMenuButton = true, activePathn
       <div className="flex items-center gap-3 lg:hidden shrink-0">
         {showMenuButton && (
           <button
+            type="button"
             onClick={onMenuClick}
+            aria-label={mobileSidebarOpen ? "Close sidebar" : "Open sidebar"}
+            aria-expanded={mobileSidebarOpen}
+            aria-controls="mobile-sidebar"
             className="flex items-center justify-center size-9 rounded-full apple-glass-pill text-text-main hover:text-primary transition-colors"
           >
             <span className="material-symbols-outlined text-[20px]">menu</span>
           </button>
         )}
       </div>
+
+      {onSidebarToggle && sidebarCollapsed && (
+        <button
+          type="button"
+          onClick={onSidebarToggle}
+          aria-label={sidebarCollapsed ? "Open sidebar" : "Close sidebar"}
+          title={sidebarCollapsed ? "Open sidebar" : "Close sidebar"}
+          aria-expanded={!sidebarCollapsed}
+          aria-controls="desktop-sidebar"
+          className="hidden lg:flex items-center justify-center size-9 shrink-0 rounded-full apple-glass-pill text-text-muted hover:text-text-main transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+        >
+          <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
+            <path d="M9 4.5v15" />
+            <path d="M3 7a2.5 2.5 0 0 1 2.5-2.5H9v15H5.5A2.5 2.5 0 0 1 3 17Z" fill="currentColor" fillOpacity="0.12" stroke="none" />
+          </svg>
+        </button>
+      )}
 
       {/* Page title with breadcrumbs */}
       <div className="flex flex-col min-w-0 flex-1">
@@ -321,21 +341,12 @@ export default function Header({ onMenuClick, showMenuButton = true, activePathn
           </div>
         )}
         <HeaderSearch />
-        <button
-          onClick={() => setDonateOpen(true)}
-          className="hidden sm:flex items-center gap-1.5 px-3.5 h-8.5 rounded-full bg-surface-2 text-pink-600 dark:text-pink-300 hover:bg-pink-500/20  transition-all text-xs font-semibold active:scale-[0.97]"
-          aria-label="Donate"
-        >
-          <span className="material-symbols-outlined text-[16px]">volunteer_activism</span>
-          <span className="hidden sm:inline">Donate</span>
-        </button>
         <div className="flex items-center gap-0.5 rounded-full apple-glass-pill px-1 py-0.5">
           <ThemeToggle />
           <HeaderLanguage />
           <HeaderMenu onLogout={handleLogout} />
         </div>
       </div>
-      <DonateModal isOpen={donateOpen} onClose={() => setDonateOpen(false)} />
     </header>
   );
 }
@@ -378,4 +389,7 @@ Header.propTypes = {
   onMenuClick: PropTypes.func,
   showMenuButton: PropTypes.bool,
   activePathname: PropTypes.string,
+  sidebarCollapsed: PropTypes.bool,
+  onSidebarToggle: PropTypes.func,
+  mobileSidebarOpen: PropTypes.bool,
 };

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import PropTypes from "prop-types";
+import { translate } from "@/i18n/runtime";
 import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import {
@@ -26,6 +27,7 @@ import { checkKeyStatus } from "@/shared/utils/keyAccess";
 export default function APIPageClient({ machineId }) {
   const initialSettings = getInitialCache("settings", null);
   const [keys, setKeys] = useState(() => getInitialCache("keys", []));
+  const keyReadRevisionRef = useRef(0);
   const [loading, setLoading] = useState(() => !hasInitialCache("keys"));
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingKey, setEditingKey] = useState(null);
@@ -117,24 +119,41 @@ export default function APIPageClient({ machineId }) {
     loadSettings();
   }, []);
 
-  // Silently refresh API keys every 5s when tab is visible so circular token gauges stay live
+  // Refresh on persisted usage events, with a 2s fallback and no overlapping reads
   useEffect(() => {
+    let active = true;
+    let inFlight = false;
+    const controller = new AbortController();
     const refreshKeysSilently = async () => {
-      if (typeof document !== "undefined" && document.hidden) return;
+      if (!active || inFlight || document.hidden) return;
+      inFlight = true;
+      const revision = ++keyReadRevisionRef.current;
       try {
-        const res = await fetch("/api/keys", { cache: "no-store" });
+        const res = await fetch("/api/keys", { cache: "no-store", signal: controller.signal });
         if (!res.ok) return;
         const data = await res.json();
-        if (Array.isArray(data.keys)) {
+        if (active && revision === keyReadRevisionRef.current && Array.isArray(data.keys)) {
           writeCache("keys", data.keys);
           setKeys(data.keys);
         }
       } catch {
         /* ignore background poll errors */
+      } finally {
+        inFlight = false;
       }
     };
-    const timer = setInterval(refreshKeysSilently, 5000);
-    return () => clearInterval(timer);
+    const stream = new EventSource("/api/usage/stream");
+    stream.onmessage = refreshKeysSilently;
+    const timer = setInterval(refreshKeysSilently, 2000);
+    const onVisible = () => { if (!document.hidden) void refreshKeysSilently(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      active = false;
+      controller.abort();
+      stream.close();
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   // Status poll: only while degraded (not yet reachable). Stop once healthy to avoid spam.
@@ -280,6 +299,7 @@ export default function APIPageClient({ machineId }) {
   };
 
   const fetchData = async () => {
+    const revision = ++keyReadRevisionRef.current;
     runWithCache(() => {
       const cachedKeys = readCache("keys", null);
       if (cachedKeys !== null) {
@@ -307,8 +327,10 @@ export default function APIPageClient({ machineId }) {
           if (createRes.ok) existing = await fetchKeys();
         } catch { /* fall through to empty render */ }
       }
-      writeCache("keys", existing);
-      setKeys(existing);
+      if (revision === keyReadRevisionRef.current) {
+        writeCache("keys", existing);
+        setKeys(existing);
+      }
     } catch (error) {
       console.log("Error fetching data:", error);
     } finally {
@@ -816,14 +838,14 @@ export default function APIPageClient({ machineId }) {
   return (
     <div className="flex flex-col gap-8">
       {/* Endpoint Card */}
-      <Card>
+      <Card className="endpoint-panel">
         <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
           <span className="material-symbols-outlined text-primary">api</span>
           API Endpoint
         </h2>
 
         {/* Endpoint rows */}
-        <div className="flex flex-col gap-2">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
           {/* Local */}
           <EndpointRow
             label="Local"
@@ -833,10 +855,9 @@ export default function APIPageClient({ machineId }) {
             onCopy={copy}
           />
           {/* Cloudflare Tunnel */}
-          <div className="flex items-center gap-2">
-            <span className={`text-xs font-mono px-1.5 py-0.5 rounded shrink-0 min-w-[88px] text-center ${
-              tunnelEnabled ? "bg-primary/10 text-primary" : "bg-surface-2 text-text-muted"
-            }`}>Tunnel</span>
+          <div className="endpoint-connection-row flex items-center gap-3 min-h-14 px-3 py-2 rounded-xl border border-border-subtle bg-surface-2">
+            <span className="flex items-center gap-2 shrink-0 text-sm font-medium"><span className="material-symbols-outlined text-[18px] text-text-muted" aria-hidden="true">cloud</span>Tunnel</span>
+            {!tunnelEnabled && !tunnelLoading && !tunnelChecking && tunnelStatus?.type !== "error" && <span className="endpoint-connection-status text-xs text-text-muted">Disabled</span>}
             {tunnelEnabled && !tunnelLoading && tunnelReachable ? (
               <>
                 <Input value={`${tunnelPublicUrl || tunnelUrl}/v1`} readOnly className="flex-1 font-mono text-sm" />
@@ -888,7 +909,7 @@ export default function APIPageClient({ machineId }) {
                   <span className="material-symbols-outlined text-sm">error</span>
                   {tunnelStatus.message}
                 </div>
-                <Button size="sm" icon="cloud_upload" onClick={() => setShowEnableTunnelModal(true)}>Enable</Button>
+                <Button size="sm" variant="secondary" icon="cloud_upload" onClick={() => setShowEnableTunnelModal(true)}>Enable</Button>
               </>
             ) : tunnelChecking ? (
               <>
@@ -906,7 +927,7 @@ export default function APIPageClient({ machineId }) {
               </>
             ) : (
               <Button
-                size="sm"
+                size="sm" variant="secondary"
                 icon="cloud_upload"
                 onClick={() => {
                   if (isLoginUnsafe) {
@@ -925,10 +946,9 @@ export default function APIPageClient({ machineId }) {
             )}
           </div>
           {/* Tailscale */}
-          <div className="flex items-center gap-2">
-            <span className={`text-xs font-mono px-1.5 py-0.5 rounded shrink-0 min-w-[88px] text-center ${
-              tsEnabled ? "bg-primary/10 text-primary" : "bg-surface-2 text-text-muted"
-            }`}>Tailscale</span>
+          <div className="endpoint-connection-row flex items-center gap-3 min-h-14 px-3 py-2 rounded-xl border border-border-subtle bg-surface-2">
+            <span className="flex items-center gap-2 shrink-0 text-sm font-medium"><span className="material-symbols-outlined text-[18px] text-text-muted" aria-hidden="true">vpn_lock</span>Tailscale</span>
+            {!tsEnabled && !tsLoading && !tsConnecting && tsStatus?.type !== "error" && <span className="endpoint-connection-status text-xs text-text-muted">Disabled</span>}
             {tsEnabled && !tsLoading && tsReachable ? (
               <>
                 <Input value={`${tsUrl}/v1`} readOnly className="flex-1 font-mono text-sm" />
@@ -968,7 +988,7 @@ export default function APIPageClient({ machineId }) {
                 </div>
                 {tsAuthUrl && (
                   <Button
-                    size="sm"
+                    size="sm" variant="secondary"
                     icon="open_in_new"
                     onClick={() => window.open(tsAuthUrl, "tailscale_auth", "width=600,height=700,noopener,noreferrer")}
                   >
@@ -989,11 +1009,11 @@ export default function APIPageClient({ machineId }) {
                   <span className="material-symbols-outlined text-sm">error</span>
                   {tsStatus.message}
                 </div>
-                <Button size="sm" icon="vpn_lock" onClick={handleOpenTsModal}>Enable</Button>
+                <Button size="sm" variant="secondary" icon="vpn_lock" onClick={handleOpenTsModal}>Enable</Button>
               </>
             ) : (
               <Button
-                size="sm"
+                size="sm" variant="secondary"
                 icon="vpn_lock"
                 onClick={() => {
                   if (isLoginUnsafe) {
@@ -1002,7 +1022,7 @@ export default function APIPageClient({ machineId }) {
                   }
                   handleOpenTsModal();
                 }}
-                className="bg-linear-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white!"
+
               >
                 Enable
               </Button>
@@ -1267,8 +1287,8 @@ export default function APIPageClient({ machineId }) {
                       onClick={() => {
                         if (key.isActive !== false) {
                           setConfirmState({
-                            title: "Thu hồi (Revoke) API Key",
-                            message: `Thu hồi quyền truy cập của key "${key.name}"?\n\nUser sẽ không thể gọi API bằng key này nữa cho đến khi bạn mở lại.`,
+                            title: translate("Revoke API key"),
+                            message: `${translate("Revoke access for key")} "${key.name}"?\n\n${translate("This key cannot be used for API requests until you reactivate it.")}`,
                             onConfirm: async () => {
                               setConfirmState(null);
                               handleToggleKey(key.id, false);

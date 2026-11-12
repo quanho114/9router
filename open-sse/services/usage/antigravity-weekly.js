@@ -13,7 +13,7 @@ const WEEKLY_CONFIG = {
 };
 
 // — Cache: TTL + in-flight dedup per project ———————————————
-const WEEKLY_CACHE_TTL_MS = 60_000; // 60 seconds
+const WEEKLY_CACHE_TTL_MS = 2_000; // Live dashboard polls every 2 seconds.
 const weeklyCache = new Map(); // cacheKey -> { result, expiresAt } | { promise, result, expiresAt }
 
 function cloneWeeklyResult(result) {

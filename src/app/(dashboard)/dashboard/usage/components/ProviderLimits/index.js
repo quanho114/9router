@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import QuotaTable from "./QuotaTable";
+import QuotaSelect from "./QuotaSelect";
 import QuotaIcon from "./QuotaIcon";
 import Toggle from "@/shared/components/Toggle";
 import Tooltip from "@/shared/components/Tooltip";
@@ -27,6 +28,7 @@ import {
   getPaginationPageValue,
   getProviderOptions,
   reconcileConnectionsPage,
+  reconcileAntigravityQuotaReadings,
   getQuotaCache,
   setQuotaCache,
   QUOTA_CACHE_KEY,
@@ -422,8 +424,11 @@ export default function ProviderLimits() {
       console.log(`[ProviderLimits] Got quota for ${provider}:`, data);
 
       // Parse quota data using provider-specific parser
-      const parsedQuotas = parseQuotaData(provider, data);
       const previousEntry = quotaDataRef.current[connectionId];
+      const parsed = parseQuotaData(provider, data);
+      const parsedQuotas = provider === "antigravity"
+        ? reconcileAntigravityQuotaReadings(previousEntry?.quotas, parsed)
+        : parsed;
       const keepPreviousQuotas =
         parsedQuotas.length === 0 &&
         Array.isArray(previousEntry?.quotas) &&
@@ -888,10 +893,14 @@ export default function ProviderLimits() {
     if (!hasHydratedAutoRefresh || !autoRefresh) return;
     const refresh = () => { if (!document.hidden) void refreshAll(); };
     intervalRef.current = setInterval(refresh, REFRESH_INTERVAL_MS);
+    // Persisted response usage prompts an immediate quota read as well.
+    const usageStream = new EventSource("/api/usage/stream");
+    usageStream.onmessage = refresh;
     const onVisibilityChange = () => { if (!document.hidden) refresh(); };
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       clearInterval(intervalRef.current);
+      usageStream.close();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [autoRefresh, refreshAll, hasHydratedAutoRefresh]);
@@ -1051,7 +1060,7 @@ export default function ProviderLimits() {
                   aria-label="Close provider filter"
                   onClick={() => setProviderMenuOpen(false)}
                 />
-                <div className="absolute left-0 z-40 mt-2 w-64 overflow-hidden rounded-2xl border border-black/10 bg-surface/95 p-1.5 shadow-xl shadow-black/10 backdrop-blur dark:border-white/10 dark:bg-surface/95 sm:w-72">
+                <div className="app-popover absolute left-0 z-40 mt-2 w-64 overflow-hidden rounded-2xl border border-black/10 bg-surface/95 p-1.5 shadow-xl shadow-black/10 backdrop-blur dark:border-white/10 dark:bg-surface/95 sm:w-72">
                   <button
                     type="button"
                     onClick={() => {
@@ -1108,38 +1117,14 @@ export default function ProviderLimits() {
               </>
             )}
           </div>
-          <select
-            value={accountFilter}
-            onChange={(event) => {
-              const nextValue = event.target.value;
-              if (shouldResetPage(accountFilter, nextValue)) {
-                setPage(1);
-              }
+          <QuotaSelect value={accountFilter} options={ACCOUNT_FILTER_OPTIONS} label="Filter accounts by status"
+            onChange={(nextValue) => {
+              if (shouldResetPage(accountFilter, nextValue)) setPage(1);
               setAccountFilter(nextValue);
-            }}
-            className="h-8 rounded-lg border border-black/10 bg-black/[0.02] px-2 text-xs text-text-primary outline-none transition-colors hover:bg-black/5 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/10"
-            aria-label="Filter accounts by status"
-          >
-            {ACCOUNT_FILTER_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            }} />
 
           {providerFilter === "codex" && (
-            <select
-              value={quotaSortMode}
-              onChange={(event) => setQuotaSortMode(event.target.value)}
-              className="h-8 rounded-lg border border-black/10 bg-black/[0.02] px-2 text-xs text-text-primary outline-none transition-colors hover:bg-black/5 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/10"
-              aria-label="Sort Codex quotas by remaining"
-            >
-              {QUOTA_SORT_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <QuotaSelect value={quotaSortMode} options={QUOTA_SORT_OPTIONS} label="Sort Codex quotas by remaining" onChange={setQuotaSortMode} />
           )}
 
           <button
@@ -1157,7 +1142,7 @@ export default function ProviderLimits() {
             <summary className="flex h-8 cursor-pointer list-none items-center gap-1 rounded-lg border border-black/10 px-2 text-xs text-text-muted hover:bg-black/5 dark:border-white/10 dark:hover:bg-white/5 [&::-webkit-details-marker]:hidden">
               Bulk actions <QuotaIcon name="expand_more" />
             </summary>
-            <div className="absolute left-0 top-9 z-20 w-48 rounded-lg border border-black/10 bg-surface p-1 shadow-lg dark:border-white/10">
+            <div className="app-popover absolute left-0 top-9 z-20 w-48 rounded-lg border border-black/10 bg-surface p-1 shadow-lg dark:border-white/10">
               <button type="button" onClick={handleDisableDepleted} disabled={bulkToggling} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-xs text-text-primary hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50">
                 <QuotaIcon name="block" /> Disable depleted
               </button>
@@ -1178,7 +1163,7 @@ export default function ProviderLimits() {
           >
             <span aria-hidden="true" className={`size-1.5 rounded-full ${autoRefresh ? "bg-emerald-600" : "bg-neutral-400"}`} />
             <span className="text-text-primary">
-              {autoRefresh ? "Live · 3s" : "Updates paused"}
+              {autoRefresh ? `Live · ${REFRESH_INTERVAL_MS / 1000}s` : "Updates paused"}
             </span>
           </button>
 
@@ -1376,7 +1361,7 @@ export default function ProviderLimits() {
                       <summary aria-label="Account actions" className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg text-text-muted hover:bg-black/5 dark:hover:bg-white/5 [&::-webkit-details-marker]:hidden">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
                       </summary>
-                      <div className="absolute right-0 top-9 z-20 w-44 rounded-lg border border-black/10 bg-surface p-1 shadow-lg dark:border-white/10">
+                      <div className="app-popover absolute right-0 top-9 z-20 w-44 rounded-lg border border-black/10 bg-surface p-1 shadow-lg dark:border-white/10">
                     <Tooltip text="Edit connection">
                       <button
                         type="button"
@@ -1502,28 +1487,16 @@ export default function ProviderLimits() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs text-text-muted">{connectionsPageSummary}</span>
             <div className="flex flex-wrap items-center gap-2">
-              <select
-                value={isCustomPageSize ? "custom" : String(pageSize)}
-                onChange={(event) => {
-                  const nextValue = event.target.value;
+              <QuotaSelect value={isCustomPageSize ? "custom" : String(pageSize)}
+                options={[...ACCOUNT_PAGE_SIZE_OPTIONS.map((option) => ({ value: String(option), label: option + " / page" })), { value: "custom", label: "Custom" }]}
+                label="Accounts per page" placement="top"
+                onChange={(nextValue) => {
                   if (nextValue === "custom") return;
                   const nextPageSize = Number.parseInt(nextValue, 10);
                   if (Number.isFinite(nextPageSize)) {
-                    setPage(1);
-                    setPageSize(nextPageSize);
-                    setCustomPageSizeInput(String(nextPageSize));
+                    setPage(1); setPageSize(nextPageSize); setCustomPageSizeInput(String(nextPageSize));
                   }
-                }}
-                className="h-8 rounded-lg border border-black/10 bg-black/[0.02] px-2 text-xs text-text-primary outline-none transition-colors hover:bg-black/5 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/10"
-                aria-label="Accounts per page"
-              >
-                {ACCOUNT_PAGE_SIZE_OPTIONS.map((option) => (
-                  <option key={option} value={String(option)}>
-                    {option} / page
-                  </option>
-                ))}
-                <option value="custom">Custom</option>
-              </select>
+                }} />
               <input
                 type="number"
                 min="1"

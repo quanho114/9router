@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatResetTime, getRemainingPercentage } from "./utils";
 
 const PAGE_SIZE = 10;
@@ -89,6 +89,14 @@ export default function QuotaTable({
   onHideQuota = null,
 }) {
   const [paginationState, setPaginationState] = useState({ page: 1, sortMode });
+  // Countdown advances independently of slow or failed provider quota requests.
+  const [, setClockTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!document.hidden) setClockTick((tick) => tick + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const normalizedQuotas = useMemo(
     () => quotas.map((quota, index) => ({

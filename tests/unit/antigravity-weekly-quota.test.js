@@ -262,6 +262,28 @@ describe("fetchAntigravityWeeklyQuota", () => {
     expect(result.gemini_weekly).toBeDefined();
   });
 
+  it("expires the live cache after 2 seconds instead of holding quota for a minute", async () => {
+    const clock = vi.spyOn(Date, "now");
+    try {
+      clock.mockReturnValue(10000);
+      proxyAwareFetch.mockResolvedValue({ ok: true, json: async () => FULL_RESPONSE });
+      await fetchAntigravityWeeklyQuota("live-token", "live-project");
+      clock.mockReturnValue(11999);
+      await fetchAntigravityWeeklyQuota("live-token", "live-project");
+      expect(proxyAwareFetch).toHaveBeenCalledTimes(1);
+      clock.mockReturnValue(12000);
+      await fetchAntigravityWeeklyQuota("live-token", "live-project");
+      expect(proxyAwareFetch).toHaveBeenCalledTimes(2);
+    } finally { clock.mockRestore(); }
+  });
+
+  it("allows an explicit refresh to bypass a still-valid cache", async () => {
+    proxyAwareFetch.mockResolvedValue({ ok: true, json: async () => FULL_RESPONSE });
+    await fetchAntigravityWeeklyQuota("force-token", "force-project");
+    await fetchAntigravityWeeklyQuota("force-token", "force-project", null, { bypassCache: true });
+    expect(proxyAwareFetch).toHaveBeenCalledTimes(2);
+  });
+
   it("sends correct headers and body", async () => {
     proxyAwareFetch.mockResolvedValue({
       ok: true,

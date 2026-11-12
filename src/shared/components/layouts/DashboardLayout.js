@@ -62,6 +62,7 @@ function getToastStyle(type) {
 
 export default function DashboardLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
   const [pendingNav, setPendingNav] = useState(null);
@@ -146,7 +147,8 @@ export default function DashboardLayout({ children }) {
   }, [router]);
 
   return (
-    <div className="relative flex h-screen w-full overflow-hidden bg-bg isolate">
+    <div className="dolphin-dashboard relative flex h-screen w-full overflow-hidden bg-bg isolate">
+      <div className="dolphin-wallpaper pointer-events-none absolute inset-0 -z-10" aria-hidden="true" />
 
       {/* Apple Dynamic Island / Glass Toast Notifications */}
       <div className="fixed top-4 right-4 z-[80] flex w-[min(92vw,380px)] flex-col gap-2.5">
@@ -188,12 +190,19 @@ export default function DashboardLayout({ children }) {
       )}
 
       {/* Sidebar - Desktop */}
-      <div className="hidden lg:flex p-3 pr-0 h-full">
-        <Sidebar activePathname={effectivePathname} onNavigate={handleNavigate} />
+      <div
+        id="desktop-sidebar"
+        className={`hidden lg:flex shrink-0 overflow-hidden h-full transition-[width] duration-200 motion-reduce:transition-none ${sidebarCollapsed ? "w-[84px]" : "w-[300px]"}`}
+      >
+        <div className="p-3 pr-0 h-full shrink-0">
+        <Sidebar activePathname={effectivePathname} onNavigate={handleNavigate} collapsed={sidebarCollapsed} onCollapse={() => setSidebarCollapsed((collapsed) => !collapsed)} />
+        </div>
       </div>
 
       {/* Sidebar - Mobile */}
       <div
+        id="mobile-sidebar"
+        inert={!sidebarOpen ? true : undefined}
         className={`fixed inset-y-0 left-0 z-50 transform lg:hidden transition-transform duration-300 ease-out ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
@@ -206,12 +215,15 @@ export default function DashboardLayout({ children }) {
       </div>
 
       {/* Main content */}
-      <main className="flex flex-col flex-1 h-full min-w-0 relative transition-colors duration-300 isolate">
-        {/* Subtle Apple spatial grid + mesh */}
-        <div className="landing-grid absolute inset-0 pointer-events-none -z-10" aria-hidden="true" />
-        <Header activePathname={effectivePathname} onMenuClick={() => setSidebarOpen(true)} />
-        <div className={`flex-1 overflow-y-auto custom-scrollbar ${effectivePathname === "/dashboard/basic-chat" ? "" : "p-5 lg:p-9"} ${effectivePathname === "/dashboard/basic-chat" ? "flex flex-col overflow-hidden" : ""}`}>
-          <div className={`${effectivePathname === "/dashboard/basic-chat" ? "flex-1 w-full h-full flex flex-col" : "max-w-7xl mx-auto"}`}>
+      <main className="dolphin-workspace flex flex-col flex-1 min-h-0 min-w-0 relative transition-colors duration-300 isolate">
+        <Header
+          activePathname={effectivePathname}
+          onMenuClick={() => setSidebarOpen((open) => !open)}
+          mobileSidebarOpen={sidebarOpen}
+          sidebarCollapsed={sidebarCollapsed}
+        />
+        <div className={`flex-1 min-h-0 overflow-y-auto custom-scrollbar ${effectivePathname === "/dashboard/basic-chat" ? "" : "px-5 pb-5 pt-4 lg:px-9 lg:pb-9 lg:pt-6"} ${effectivePathname === "/dashboard/basic-chat" ? "flex flex-col overflow-hidden" : ""}`}>
+          <div className={`dolphin-content ${effectivePathname === "/dashboard/basic-chat" ? "flex-1 w-full h-full flex flex-col" : "max-w-7xl mx-auto"}`}>
             {children}
           </div>
         </div>

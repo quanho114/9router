@@ -66,17 +66,14 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   const { copied, copy } = useCopyToClipboard();
 
   // State for client-only values to avoid hydration mismatch
-  const [isLocalhost, setIsLocalhost] = useState(false);
   const [placeholderUrl, setPlaceholderUrl] = useState("/callback?code=...");
   const callbackProcessedRef = useRef(false);
 
-  // Detect if running on localhost (client-side only)
+  // Populate the client-only placeholder after hydration.
   useEffect(() => {
     if (typeof window !== "undefined") {
-      setIsLocalhost(
-        window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
-      );
-      setPlaceholderUrl(`${window.location.origin}/callback?code=...`);
+      const timer = setTimeout(() => setPlaceholderUrl(`${window.location.origin}/callback?code=...`), 0);
+      return () => clearTimeout(timer);
     }
   }, []);
 
@@ -104,6 +101,15 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
+      // A callback may close only after the connection has actually been saved.
+      const completion = { type: "oauth_complete", state: authData.state };
+      try { popupRef.current?.postMessage(completion, new URL(authData.redirectUri).origin); } catch {}
+      try {
+        const channel = new BroadcastChannel("oauth_completion");
+        channel.postMessage(completion);
+        channel.close();
+      } catch {}
+      try { localStorage.setItem("oauth_completion", JSON.stringify({ ...completion, timestamp: Date.now() })); } catch {}
       setStep("success");
       onSuccessRef.current?.();
     } catch (err) {
@@ -268,6 +274,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
   // open effect via ref and from user actions, so memoization would only add
   // an identity that re-triggers effects on every parent re-render).
   const startOAuthFlow = async () => {
+    // Read synchronously: the first open can run before a detection effect renders.
+    const isLocalhost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
     if (!provider) return;
     try {
       setError(null);
@@ -367,7 +375,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       } else if (provider === "xai") {
         redirectUri = "http://127.0.0.1:56121/callback";
       } else {
-        redirectUri = `http://localhost:${appPort}/callback`;
+        redirectUri = isLocalhost
+          ? `${window.location.origin}/callback`
+          : `http://localhost:${appPort}/callback`;
       }
 
       // Build authorize URL first to get codeVerifier/state for codex server-side mode
@@ -583,6 +593,8 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       if (callbackProcessedRef.current) return; // Already processed
 
       const { code, token, state, error: callbackError, errorDescription } = data;
+      // Ignore callbacks belonging to another login attempt or provider.
+      if (!state || state !== authData.state) return;
 
       if (callbackError) {
         callbackProcessedRef.current = true;
@@ -600,7 +612,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     // Method 1: postMessage from popup
     const handleMessage = (event) => {
       // Allow messages from same origin or localhost (any port)
-      const isLocalhost = event.origin.includes("localhost") || event.origin.includes("127.0.0.1");
+      const isLocalhost = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(event.origin);
       const isSameOrigin = event.origin === window.location.origin;
       if (!isLocalhost && !isSameOrigin) return;
       

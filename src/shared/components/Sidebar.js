@@ -36,7 +36,7 @@ const systemItems = [
   { href: "/dashboard/skills", label: "Skills", icon: "extension" },
 ];
 
-export default function Sidebar({ onClose, onNavigate, activePathname }) {
+export default function Sidebar({ onClose, onCollapse, onNavigate, activePathname, collapsed = false }) {
   const routerPathname = usePathname();
   const pathname = activePathname || routerPathname;
   const [mediaOpen, setMediaOpen] = useState(false);
@@ -69,6 +69,37 @@ export default function Sidebar({ onClose, onNavigate, activePathname }) {
         : "text-text-main/75 hover:bg-white/30 dark:hover:bg-white/[0.06] hover:text-text-main font-medium"
     );
 
+  if (collapsed) {
+    const compactItems = [
+      ...navItems,
+      { href: "/dashboard/media-providers", label: "Media Providers", icon: "perm_media" },
+      ...systemItems,
+      ...debugItems.filter((item) => item.icon !== "translate" || enableTranslator),
+    ];
+    const compactLink = (item) => (
+      <Link key={item.href} href={item.href} onClick={(event) => handleLinkClick(event, item.href)}
+        title={item.label} aria-label={item.label} aria-current={isActive(item.href) ? "page" : undefined}
+        className={cn("flex size-11 shrink-0 items-center justify-center rounded-xl transition-colors focus-visible:outline-2 focus-visible:outline-primary", isActive(item.href) ? "liquid-active text-primary" : "text-text-main/65 hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main")}>
+        <span className="material-symbols-outlined text-[22px]" aria-hidden="true">{item.icon}</span>
+      </Link>
+    );
+    return (
+      <aside className="flex w-[72px] h-full min-h-0 flex-col items-center rounded-[24px] bg-sidebar liquid-sidebar py-4 gap-3">
+        <button type="button" onClick={onCollapse} title="Open sidebar" aria-label="Open sidebar" aria-expanded={false} aria-controls="desktop-sidebar"
+          className="group relative flex size-10 shrink-0 items-center justify-center rounded-xl text-text-main/65 hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+          <img src="/logo.svg" alt="" className="size-8 opacity-100 group-hover:opacity-0 group-focus-visible:opacity-0 transition-opacity duration-150 motion-reduce:transition-none" />
+          <svg className="absolute opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 transition-opacity duration-150 motion-reduce:transition-none" width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+            <rect x="3" y="4.5" width="18" height="15" rx="2.5" /><path d="M9 4.5v15" />
+          </svg>
+        </button>
+        <nav aria-label="Main navigation" className="flex flex-1 min-h-0 w-full flex-col items-center gap-1 overflow-y-auto custom-scrollbar py-1">
+          {compactItems.map(compactLink)}
+        </nav>
+        {compactLink({ href: "/dashboard/profile", label: "Settings", icon: "settings" })}
+      </aside>
+    );
+  }
+
   return (
     <>
       <aside className="flex w-72 flex-col bg-sidebar liquid-sidebar transition-colors duration-300 h-full min-h-0 rounded-[28px] select-none">
@@ -77,12 +108,34 @@ export default function Sidebar({ onClose, onNavigate, activePathname }) {
           <div className="w-3 h-3 rounded-full bg-[#FF5F56] border border-[#E0443E]/60 shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.55),0_1px_2px_rgba(0,0,0,0.12)]" />
           <div className="w-3 h-3 rounded-full bg-[#FFBD2E] border border-[#DEA123]/60 shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.55),0_1px_2px_rgba(0,0,0,0.12)]" />
           <div className="w-3 h-3 rounded-full bg-[#27C93F] border border-[#1AAB29]/60 shadow-[inset_0_1px_0.5px_rgba(255,255,255,0.55),0_1px_2px_rgba(0,0,0,0.12)]" />
+          {onCollapse && (
+            <button
+              type="button"
+              onClick={onCollapse}
+              aria-label="Close sidebar"
+              title="Close sidebar"
+              aria-expanded={true}
+              aria-controls="desktop-sidebar"
+              className="ml-auto flex size-8 items-center justify-center rounded-lg text-text-main/65 hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            >
+              <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
+                <path d="M9 4.5v15" />
+                <path d="M3 7a2.5 2.5 0 0 1 2.5-2.5H9v15H5.5A2.5 2.5 0 0 1 3 17Z" fill="currentColor" fillOpacity="0.12" stroke="none" />
+              </svg>
+            </button>
+          )}
+          {onClose && (
+            <button type="button" onClick={onClose} aria-label="Close sidebar" title="Close sidebar" className="ml-auto flex size-8 items-center justify-center rounded-full text-text-muted hover:bg-black/5 dark:hover:bg-white/10 hover:text-text-main focus-visible:outline-2 focus-visible:outline-primary">
+              <span className="material-symbols-outlined text-[20px]" aria-hidden="true">close</span>
+            </button>
+          )}
         </div>
 
         {/* Brand Identity */}
         <div className="px-6 py-4 flex flex-col gap-2.5">
           <Link href="/dashboard" prefetch={true} onClick={(e) => handleLinkClick(e, "/dashboard")} className="flex items-center gap-3.5 group">
-            <div className="flex items-center justify-center size-10 rounded-[12px] bg-white group-hover:scale-[1.03] transition-transform duration-200">
+            <div className="flex items-center justify-center size-10 rounded-[12px] group-hover:scale-[1.03] transition-transform duration-200">
               <img src="/logo.svg" alt="" className="size-9" />
             </div>
             <div className="flex flex-col">
@@ -257,6 +310,8 @@ export default function Sidebar({ onClose, onNavigate, activePathname }) {
 }
 
 Sidebar.propTypes = {
+  collapsed: PropTypes.bool,
+  onCollapse: PropTypes.func,
   onClose: PropTypes.func,
   onNavigate: PropTypes.func,
   activePathname: PropTypes.string,

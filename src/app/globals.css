@@ -827,6 +827,55 @@ body {
 .dark .liquid-active::before {
   background: linear-gradient(135deg, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0) 42%, rgba(255,255,255,0.08) 100%);
 }
+
+/* Ocean wallpaper stays fixed behind the dashboard's scrolling content. */
+.dolphin-dashboard {
+  --color-surface: rgba(255, 255, 255, 0.28);
+  --color-surface-2: rgba(255, 255, 255, 0.22);
+  --shadow-soft: inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.35),
+    0 6px 20px -12px rgba(24, 44, 38, 0.2);
+}
+.dolphin-wallpaper {
+  background: linear-gradient(rgba(246, 250, 241, 0.08), rgba(246, 250, 241, 0.08)),
+    url('/meadow-mountains.png') center / cover no-repeat;
+
+}
+.dolphin-workspace {
+  margin: 12px;
+  overflow: hidden;
+  border-radius: 28px;
+  background: rgba(248, 252, 250, 0.46);
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 12px 40px -20px rgba(24, 44, 38, 0.24);
+  backdrop-filter: blur(24px) saturate(110%);
+  -webkit-backdrop-filter: blur(24px) saturate(110%);
+}
+.dolphin-dashboard > main > header {
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.dark .dolphin-dashboard {
+  --color-surface: rgba(24, 30, 36, 0.3);
+  --color-surface-2: rgba(255, 255, 255, 0.08);
+  --shadow-soft: inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 0 0 1px rgba(255, 255, 255, 0.1),
+    0 6px 20px -12px rgba(0, 0, 0, 0.35);
+}
+.dark .dolphin-wallpaper {
+  background-image: linear-gradient(rgba(3, 15, 23, 0.38), rgba(3, 15, 23, 0.38)),
+    url('/meadow-mountains.png');
+}
+.dark .dolphin-workspace {
+  background: rgba(20, 27, 34, 0.56);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.dark .dolphin-dashboard > main > header {
+  background: transparent;
+  box-shadow: none;
+}
 /* Pure white canvas; glass defined by hairlines + soft shadow instead of colored wallpaper */
 :root {
   --color-bg: #ffffff;
@@ -916,4 +965,180 @@ body { background-image: none; background-color: #ffffff; }
 }
 .dark .liquid-active::before {
   background: linear-gradient(135deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0) 45%, rgba(255,255,255,0.05) 100%);
+}
+
+/* Dashboard sidebar: translucent material with quiet edge highlights. */
+.dolphin-dashboard .liquid-sidebar {
+  background: rgba(248, 251, 247, 0.3) !important;
+  backdrop-filter: blur(20px) saturate(115%);
+  -webkit-backdrop-filter: blur(20px) saturate(115%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.48),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    inset 1px 0 0 rgba(255, 255, 255, 0.42),
+    0 12px 32px -16px rgba(24, 44, 38, 0.3);
+}
+.dolphin-dashboard .liquid-sidebar .liquid-active {
+  background: rgba(255, 255, 255, 0.42);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.54),
+    0 2px 5px rgba(24, 44, 38, 0.06);
+}
+.dolphin-dashboard .liquid-sidebar .liquid-active::before {
+  background: none;
+}
+.dark .dolphin-dashboard .liquid-sidebar {
+  background: rgba(22, 30, 32, 0.38) !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 12px 32px -16px rgba(0, 0, 0, 0.55);
+}
+.dark .dolphin-dashboard .liquid-sidebar .liquid-active {
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dolphin-dashboard .liquid-sidebar { background: rgba(245, 249, 245, 0.96) !important; }
+  .dark .dolphin-dashboard .liquid-sidebar { background: rgba(22, 30, 32, 0.96) !important; }
+}
+
+/* OLED dark surfaces with the landscape retained behind black glass. */
+.dark,
+.dark .dolphin-dashboard {
+  --color-bg: #000000;
+  --color-bg-alt: #080808;
+  --color-sidebar: #000000;
+  --color-surface: #090909;
+  --color-surface-2: #161616;
+  --color-surface-3: #222222;
+  --color-input: #111111;
+  --color-border: rgba(255, 255, 255, 0.14);
+  --color-border-subtle: rgba(255, 255, 255, 0.08);
+  --color-text-muted: #a3a3a3;
+  --shadow-soft: 0 0 0 1px rgba(255, 255, 255, 0.12);
+  --shadow-elev: 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+.dark .dolphin-wallpaper { display: block; }
+.dark .dolphin-workspace {
+  background: rgba(0, 0, 0, 0.76);
+  border-color: #232323;
+  box-shadow: none;
+  backdrop-filter: blur(24px) saturate(85%);
+  -webkit-backdrop-filter: blur(24px) saturate(85%);
+}
+.dark .dolphin-dashboard .liquid-sidebar {
+  background: rgba(0, 0, 0, 0.64) !important;
+  backdrop-filter: blur(20px) saturate(85%);
+  -webkit-backdrop-filter: blur(20px) saturate(85%);
+  box-shadow: inset 0 0 0 1px #232323;
+}
+.dark .dolphin-dashboard .liquid-sidebar .liquid-active {
+  background: #1b1b1b;
+  box-shadow: inset 0 0 0 1px #303030;
+}
+.dark .dolphin-dashboard .liquid-sidebar img[src="/logo.svg"] {
+  filter: invert(1);
+}
+
+.endpoint-connection-row > button {
+  min-height: 34px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.endpoint-connection-row > button:last-child { margin-left: auto; }
+.endpoint-connection-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.endpoint-connection-status::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+}
+.endpoint-connection-row > div { min-width: 0; }
+.endpoint-connection-row input { min-width: 0; }
+@media (max-width: 639px) {
+  .endpoint-connection-row { flex-wrap: wrap; gap: 8px; }
+  .endpoint-connection-row > div { flex-basis: 100%; order: 2; }
+}
+
+/* Provider actions share one neutral material in light and OLED modes. */
+.dolphin-dashboard .provider-action-button {
+  min-height: 36px;
+  border-radius: 10px;
+  padding-inline: 12px;
+  background-color: rgba(255, 255, 255, 0.36);
+  border: 1px solid rgba(40, 50, 45, 0.16);
+  color: var(--color-text-main);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+.dolphin-dashboard .provider-action-button:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.6);
+  border-color: rgba(40, 50, 45, 0.28);
+}
+.dolphin-dashboard .provider-action-button:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+.dark .dolphin-dashboard .provider-action-button {
+  background-color: #161616;
+  border-color: #363636;
+  box-shadow: none;
+}
+.dark .dolphin-dashboard .provider-action-button:hover:not(:disabled) {
+  background-color: #242424;
+  border-color: #505050;
+}
+
+/* Forms and confirmations need opaque surfaces, independent of dashboard glass. */
+.app-dialog-surface {
+  --color-surface: #ffffff;
+  --color-surface-2: #f1f2f3;
+  --color-surface-3: #e4e5e7;
+  --color-input: #f1f2f3;
+  --color-text-main: #1d1d1f;
+  --color-text-muted: #636367;
+  background: #fafafa;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.24), 0 0 0 1px rgba(0, 0, 0, 0.08);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.dark .app-dialog-surface {
+  --color-surface: #101010;
+  --color-surface-2: #1b1b1b;
+  --color-surface-3: #2a2a2a;
+  --color-input: #1b1b1b;
+  --color-text-main: #f5f5f7;
+  --color-text-muted: #ababaf;
+  background: #0a0a0a;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 0 1px #333333;
+}
+
+/* Floating menus must fully cover content beneath them. */
+.app-popover {
+  --color-surface: #fafafa;
+  --color-surface-2: #eeeeee;
+  background: #fafafa !important;
+  color: #1d1d1f;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.dark .app-popover {
+  --color-surface: #101010;
+  --color-surface-2: #202020;
+  background: #101010 !important;
+  color: #f5f5f7;
+}
+select option, select optgroup {
+  background-color: #fafafa;
+  color: #1d1d1f;
+}
+.dark select option, .dark select optgroup {
+  background-color: #101010;
+  color: #f5f5f7;
 }
