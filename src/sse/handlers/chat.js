@@ -9,7 +9,6 @@ import {
 } from "../services/auth.js";
 import {
   handleAntigravityQuotaError,
-  handleAntigravityStallError,
   recordAntigravityHealthyAccount,
   clearAntigravityStrikes,
   getAntigravityQuotaCache,
@@ -515,11 +514,6 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       );
       if (quotaResetMs) resetsAtMs = quotaResetMs;
       else resetsAtMs = null;
-    } else if (provider === "antigravity" && (result.status === 502 || result.status === 504)) {
-      quotaResetMs = handleAntigravityStallError(
-        credentials.connectionId, result.status, model, result.error
-      );
-      if (quotaResetMs) resetsAtMs = quotaResetMs;
     }
 
     // Antigravity 409/429 (and quota-exhausted tier errors) are managed in RAM

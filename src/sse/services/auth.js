@@ -1,6 +1,6 @@
 import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
-import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
+import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getModelLockKey } from "open-sse/services/accountFallback.js";
 import { BACKOFF_CONFIG, MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache, getAntigravityModelQuota, getPreferredAntigravityAccount } from "./antigravityQuota.js";
@@ -8,18 +8,19 @@ import { compareQuota, getProviderQuota } from "./providerQuota.js";
 import { connectionRetryAt } from "./connectionResilience.js";
 import * as log from "../utils/logger.js";
 
-function isConnectionModelLocked(connection, model, isAntigravity = false) {
-  if (!isModelLockActive(connection, model)) return false;
-  if (!isAntigravity) return true;
-  const key = model ? `modelLock_${model}` : "modelLock___all";
-  const expiry = connection[key] || connection.modelLock___all;
+const UPSTREAM_TIMEOUT_COOLDOWN_MS = 60_000;
+
+function getActiveModelLock(connection, model, isAntigravity = false) {
+  if (!isModelLockActive(connection, model)) return null;
+  const expiry = connection[getModelLockKey(model)] || connection.modelLock___all;
+  if (!isAntigravity) return expiry;
   // Real Antigravity quota exhaustion lives in RAM (antigravityQuotaCache).
   // Any DB modelLock_* exceeding BACKOFF_CONFIG.max (5m) is a stale resetsAtMs lock.
-  return new Date(expiry).getTime() - Date.now() <= BACKOFF_CONFIG.max;
+  return new Date(expiry).getTime() - Date.now() <= BACKOFF_CONFIG.max ? expiry : null;
 }
 
 export function connectionCanServeModel(connection, provider, model, requestedModel) {
-  if (isConnectionModelLocked(connection, model, provider === "antigravity")) return false;
+  if (getActiveModelLock(connection, model, provider === "antigravity")) return false;
   const enabled = connection.providerSpecificData?.enabledModels;
   return !(provider === "codex" && Array.isArray(enabled) && enabled.length &&
     requestedModel && !enabled.includes(requestedModel));
@@ -132,17 +133,16 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length}`);
     connections.forEach(c => {
       const excluded = excludeSet.has(c.id);
-      const locked = isConnectionModelLocked(c, model, isAntigravity);
-      if (excluded || locked) {
-        const lockUntil = getEarliestModelLockUntil(c);
-        log.debug("AUTH", `  → ${c.id?.slice(0, 8)} | ${excluded ? "excluded" : ""} ${locked ? `modelLocked(${model}) until ${lockUntil}` : ""}`);
+      const lockUntil = getActiveModelLock(c, model, isAntigravity);
+      if (excluded || lockUntil) {
+        log.debug("AUTH", `  → ${c.id?.slice(0, 8)} | ${excluded ? "excluded" : ""} ${lockUntil ? `modelLocked(${model}) until ${lockUntil}` : ""}`);
       }
     });
 
     if (availableConnections.length === 0) {
       // Find earliest persistent lock or lazy Antigravity quota-cache reset for retry timing.
-      const lockedConns = connections.filter(c => isConnectionModelLocked(c, model, isAntigravity));
-      const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
+      const modelLocks = new Map(connections.map(c => [c.id, getActiveModelLock(c, model, isAntigravity)]));
+      const expiries = [];
       for (const quota of quotaByConnection?.values() || []) {
         if (quota?.blockedUntil) expiries.push(new Date(quota.blockedUntil).toISOString());
       }
@@ -150,23 +150,25 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         if (retryAt) expiries.push(new Date(retryAt).toISOString());
       }
       const unsupportedExpiries = [];
-      if (isAntigravity && model && antigravityQuotaCache) {
-        connections.forEach((c) => {
+      for (const c of connections) {
+        let retryAt = modelLocks.get(c.id);
+        if (isAntigravity && model && antigravityQuotaCache) {
           const connQuotas = antigravityQuotaCache.get(c.id);
           const quota = getAntigravityModelQuota(connQuotas, model) || connQuotas?.[model];
           const resetAt = quota?.resetAt;
-          if (resetAt && new Date(resetAt).getTime() > Date.now()) {
-            if (quota?.unsupported) {
-              unsupportedExpiries.push(resetAt);
-            } else {
-              expiries.push(resetAt);
+          if (Math.round(quota?.remainingPercentage) <= 0 && Date.parse(resetAt) > Date.now()) {
+            if (!retryAt || Date.parse(resetAt) > Date.parse(retryAt)) retryAt = resetAt;
+            if (quota.unsupported) {
+              unsupportedExpiries.push(retryAt);
+              continue;
             }
           }
-        });
+        }
+        if (retryAt) expiries.push(retryAt);
       }
       const earliest = expiries.sort()[0] || unsupportedExpiries.sort()[0] || null;
       if (earliest) {
-        const earliestConn = lockedConns[0];
+        const earliestConn = connections.find(c => modelLocks.get(c.id) === earliest);
         log.warn("AUTH", `${provider} | all ${connections.length} accounts locked for ${model || "all"} (${formatRetryAfter(earliest)}) | lastError=${earliestConn?.lastError?.slice(0, 50)}`);
         return {
           allRateLimited: true,
@@ -306,6 +308,9 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     shouldFallback = true;
     cooldownMs = githubResetAtMs - Date.now();
     newBackoffLevel = 0;
+  } else if (status === 504 || (status === 502 && /connect timeout|timed out|timeout/i.test(String(errorText || "")))) {
+    shouldFallback = true;
+    cooldownMs = UPSTREAM_TIMEOUT_COOLDOWN_MS;
   } else if (resetsAtMs && resetsAtMs > Date.now()) {
     shouldFallback = true;
     cooldownMs = resolveProviderId(provider) === "antigravity"

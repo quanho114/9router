@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getProviderConnections: vi.fn(),
   getSettings: vi.fn(),
+  updateProviderConnection: vi.fn(),
   resolveConnectionProxyConfig: vi.fn(),
   getAntigravityUsage: vi.fn(),
 }));
@@ -12,7 +13,7 @@ vi.mock("@/lib/localDb", () => ({
   getSettings: mocks.getSettings,
   getProxyPools: vi.fn(),
   validateApiKey: vi.fn(),
-  updateProviderConnection: vi.fn(),
+  updateProviderConnection: mocks.updateProviderConnection,
 }));
 vi.mock("@/lib/network/connectionProxy", () => ({
   resolveConnectionProxyConfig: mocks.resolveConnectionProxyConfig,
@@ -27,8 +28,8 @@ vi.mock("open-sse/services/usage/google.js", () => ({
 }));
 vi.mock("@/sse/utils/logger.js", () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }));
 
-const { getAntigravityQuotaCache, getAntigravityModelQuota, handleAntigravityQuotaError, handleAntigravityStallError, recordAntigravityHealthyAccount, refreshAntigravityQuota, clearAntigravityStrikes } = await import("@/sse/services/antigravityQuota.js");
-const { getProviderCredentials } = await import("@/sse/services/auth.js");
+const { getAntigravityQuotaCache, getAntigravityModelQuota, handleAntigravityQuotaError, recordAntigravityHealthyAccount, refreshAntigravityQuota, clearAntigravityStrikes } = await import("@/sse/services/antigravityQuota.js");
+const { getProviderCredentials, markAccountUnavailable } = await import("@/sse/services/auth.js");
 
 const MODEL = "claude-opus-4-6-thinking";
 const FUTURE_RESET = "2026-09-01T00:00:00.000Z";
@@ -534,39 +535,39 @@ describe("Antigravity quota-aware routing", () => {
     }
   });
 
-  it("cache-blocks Argon family on 502 connect timeout so sibling Argon tiers skip stalled account while Claude stays usable", async () => {
+  it.each([
+    ["antigravity", "gemini-4-argon-low", "gemini-4-argon-medium", 502],
+    ["antigravity", "gemini-4-argon-medium", "gemini-4-argon-high", 502],
+    ["antigravity", "gemini-4-argon-high", "gemini-4-argon-low", 504],
+    ["antigravity", "gemini-3.8-flash-medium", "gemini-3.8-flash-high", 504],
+    ["openai", "gpt-5", "gpt-5-mini", 502],
+  ])("cools down only %s/%s after a timeout", async (provider, model, sibling, status) => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-26T00:00:00.000Z"));
-    mocks.getProviderConnections.mockResolvedValue([
-      { id: "ag-stalled", email: "stalled@example.com", isActive: true },
-      { id: "ag-fast", email: "fast@example.com", isActive: true },
-    ]);
-    getAntigravityQuotaCache().set("ag-stalled", {
+    const stalled = {
+      id: "stalled", email: "stalled@example.com", isActive: true, priority: 1,
+      "modelLock_unrelated": "2026-08-26T00:00:10.000Z",
+    };
+    const fast = { id: "fast", email: "fast@example.com", isActive: true, priority: 2 };
+    const quotas = {
       argon_weekly: { remainingPercentage: 50, resetAt: FUTURE_RESET },
-      claude_gpt_weekly: { remainingPercentage: 50, resetAt: FUTURE_RESET },
-    });
-    getAntigravityQuotaCache().set("ag-fast", {
-      argon_weekly: { remainingPercentage: 46, resetAt: FUTURE_RESET },
-    });
+      gemini_weekly: { remainingPercentage: 75, resetAt: FUTURE_RESET },
+    };
+    mocks.getProviderConnections.mockResolvedValue([stalled, fast]);
+    mocks.updateProviderConnection.mockImplementationOnce(async (_, update) => Object.assign(stalled, update));
+    getAntigravityQuotaCache().set(stalled.id, structuredClone(quotas));
 
     try {
-      const blockedUntil = handleAntigravityStallError("ag-stalled", 502, "gemini-4-argon-high", "[502]: fetch connect timeout (15000ms)");
-      expect(blockedUntil).toBe(Date.parse("2026-08-26T00:15:00.000Z"));
-
-      // Both gemini-4-argon-high and gemini-4-argon-medium skip ag-stalled and select ag-fast
-      const highCreds = await getProviderCredentials("antigravity", null, "gemini-4-argon-high");
-      expect(highCreds.connectionId).toBe("ag-fast");
-      const medCreds = await getProviderCredentials("antigravity", null, "gemini-4-argon-medium");
-      expect(medCreds.connectionId).toBe("ag-fast");
-
-      // Claude on ag-stalled remains unaffected
-      const claudeCreds = await getProviderCredentials("antigravity", null, "claude-sonnet-5-5-medium");
-      expect(claudeCreds.connectionId).toBe("ag-stalled");
-
-      // Clearing strikes on gemini-4-argon-high restores Argon on ag-stalled
-      clearAntigravityStrikes("ag-stalled", "gemini-4-argon-high");
-      const restoredCreds = await getProviderCredentials("antigravity", null, "gemini-4-argon-medium");
-      expect(restoredCreds.connectionId).toBe("ag-stalled");
+      const error = status === 502 ? "fetch connect timeout (24000ms)" : "Gateway timeout";
+      await expect(markAccountUnavailable(stalled.id, status, error, provider, model))
+        .resolves.toEqual({ shouldFallback: true, cooldownMs: 60_000 });
+      expect(getAntigravityQuotaCache().get(stalled.id)).toEqual(quotas);
+      await expect(getProviderCredentials(provider, null, model)).resolves.toMatchObject({ connectionId: fast.id });
+      await expect(getProviderCredentials(provider, null, sibling)).resolves.toMatchObject({ connectionId: stalled.id });
+      await expect(getProviderCredentials(provider, new Set([fast.id]), model))
+        .resolves.toMatchObject({ allRateLimited: true, retryAfter: "2026-08-26T00:01:00.000Z" });
+      vi.advanceTimersByTime(60_000);
+      await expect(getProviderCredentials(provider, null, model)).resolves.toMatchObject({ connectionId: stalled.id });
     } finally {
       vi.useRealTimers();
     }
