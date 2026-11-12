@@ -100,6 +100,10 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      if (data.success !== true || !data.connection?.id || data.connection.provider !== provider) {
+        throw new Error("Account has not been saved. Please try signing in again.");
+      }
+      if (!isOpenRef.current) return;
 
       // A callback may close only after the connection has actually been saved.
       const completion = { type: "oauth_complete", state: authData.state };
@@ -585,7 +589,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
   // Listen for OAuth callback via multiple methods
   useEffect(() => {
-    if (!authData) return;
+    if (!isOpen || !authData) return;
     callbackProcessedRef.current = false; // Reset when authData changes
 
     // Handler for callback data - only process once
@@ -664,7 +668,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       window.removeEventListener("storage", handleStorage);
       if (channel) channel.close();
     };
-  }, [authData, exchangeTokens]);
+  }, [isOpen, authData, exchangeTokens]);
 
   // Handle manual URL input
   const handleManualSubmit = async () => {

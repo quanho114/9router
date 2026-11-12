@@ -54,7 +54,13 @@ const antigravity = {
         "x-request-source": "local",
       },
     });
-    const userInfo = userInfoRes.ok ? await userInfoRes.json() : {};
+    if (!userInfoRes.ok) {
+      throw new Error(`Could not verify Antigravity account (HTTP ${userInfoRes.status}). Please sign in again.`);
+    }
+    const userInfo = await userInfoRes.json();
+    if (!userInfo.email || userInfo.verified_email === false) {
+      throw new Error("Antigravity account email has not been verified. Please verify the account and sign in again.");
+    }
 
     // Load Code Assist to get project ID and tier
     let projectId = "";

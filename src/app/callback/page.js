@@ -38,7 +38,7 @@ function CallbackContent() {
     // Give automatic exchange time to finish before offering manual recovery.
     const fallbackTimer = setTimeout(() => {
       if (!completed) setStatus("manual");
-    }, error || !(code || token) ? 0 : 10000);
+    }, error || !(code || token) ? 0 : 5000);
     let channel;
     let closeTimer;
     let doneTimer;

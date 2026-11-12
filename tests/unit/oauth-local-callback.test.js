@@ -35,7 +35,7 @@ describe('local OAuth callback lifecycle', () => {
   it('keeps URL available without confirmation, even after relay timeout', () => {
     const env = mount();
     expect(env.statuses).toEqual(['processing']);
-    env.timers.find(t => t.ms === 10000).fn();
+    env.timers.find(t => t.ms === 5000).fn();
     env.timers.find(t => t.ms === 30000).fn();
     expect(env.statuses).toEqual(['processing', 'manual']);
     expect(env.closed()).toBe(false);
