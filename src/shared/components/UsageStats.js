@@ -95,17 +95,9 @@ function sortData(dataMap, pendingMap = {}, sortBy, sortOrder) {
   return Object.entries(dataMap || {})
     .map(([key, data]) => {
       const totalTokens = (data.promptTokens || 0) + (data.completionTokens || 0);
-      const totalCost = data.cost || 0;
-      // ponytail: cost split is a token-share allocation of the (rate-accurate)
-      // server total, not a per-rate recompute. cached is a subset of prompt, so
-      // peel it out of the input share. Upgrade to a stored per-component cost
-      // breakdown if exact cached-rate cost display is needed.
-      const cachedTokens = data.cachedTokens || 0;
-      const nonCachedInput = Math.max(0, (data.promptTokens || 0) - cachedTokens);
-      const inputCost = totalTokens > 0 ? nonCachedInput * (totalCost / totalTokens) : 0;
-      const cachedCost = totalTokens > 0 ? cachedTokens * (totalCost / totalTokens) : 0;
-      const outputCost = totalTokens > 0 ? (data.completionTokens || 0) * (totalCost / totalTokens) : 0;
-      return { ...data, key, totalTokens, totalCost, inputCost, cachedCost, outputCost, pending: pendingMap[key] || 0 };
+      const { inputCost = 0, cachedCost = 0, outputCost = 0 } = data;
+      const totalCost = inputCost + cachedCost + outputCost;
+      return { ...data, key, totalTokens, totalCost, cost: totalCost, pending: pendingMap[key] || 0 };
     })
     .sort((a, b) => {
       let valA = a[sortBy];
@@ -146,7 +138,7 @@ function groupDataByKey(data, keyField) {
     s.completionTokens += item.completionTokens || 0;
     s.cachedTokens += item.cachedTokens || 0;
     s.totalTokens += item.totalTokens || 0;
-    s.cost += item.cost || 0;
+    s.cost += item.totalCost || 0;
     s.inputCost += item.inputCost || 0;
     s.cachedCost += item.cachedCost || 0;
     s.outputCost += item.outputCost || 0;
@@ -218,7 +210,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
   const setPeriod = setPeriodProp ?? setPeriodLocal;
 
   const initialStats =
-    statsCacheByPeriod.get(period) || getInitialCache(`usageStats:${period}`, null);
+    statsCacheByPeriod.get(period) || getInitialCache(`usageStats:v2:${period}`, null);
   const initialProviders =
     cachedProvidersList || getInitialCache("usageProvidersList", null);
 
@@ -298,7 +290,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
     runWithCache(() => {
       if (cancelled) return;
       const cachedForPeriod =
-        statsCacheByPeriod.get(period) || readCache(`usageStats:${period}`, null);
+        statsCacheByPeriod.get(period) || readCache(`usageStats:v2:${period}`, null);
 
       if (cachedForPeriod) {
         statsCacheByPeriod.set(period, cachedForPeriod);
@@ -325,7 +317,7 @@ export default function UsageStats({ period: periodProp, setPeriod: setPeriodPro
         if (cancelled || !data) return;
         hasLoadedStats.current = true;
         statsCacheByPeriod.set(period, data);
-        writeCache(`usageStats:${period}`, data);
+        writeCache(`usageStats:v2:${period}`, data);
         // SSE may have already reported completion while this REST read was running.
         setStats((prev) => ({ ...prev, ...data, ...liveStats.current }));
       })

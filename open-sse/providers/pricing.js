@@ -450,6 +450,10 @@ export function getPricingForModel(provider, model) {
   }
   if (MODEL_PRICING[baseModel]) return MODEL_PRICING[baseModel];
   if (MODEL_PRICING[model]) return MODEL_PRICING[model];
+  const modelWithoutEffort = baseModel.replace(/\((?:none|minimal|low|medium|high|xhigh)\)$/, "");
+  if (modelWithoutEffort !== baseModel && MODEL_PRICING[modelWithoutEffort]) {
+    return MODEL_PRICING[modelWithoutEffort];
+  }
 
   // 4. Pattern match
   for (const { pattern, pricing } of PATTERN_PRICING) {
@@ -486,10 +490,12 @@ export function formatCost(cost) {
  * @returns {number} cost in dollars
  */
 export function calculateCostFromTokens(tokens, pricing) {
-  if (!tokens || !pricing) return 0;
+  const { inputCost, cachedCost, outputCost } = calculateTokenCostBreakdown(tokens, pricing);
+  return inputCost + cachedCost + outputCost;
+}
 
-  let cost = 0;
-
+export function calculateTokenCostBreakdown(tokens, pricing) {
+  if (!tokens || !pricing) return { inputCost: 0, cachedCost: 0, outputCost: 0 };
   const inputTokens = tokens.prompt_tokens || tokens.input_tokens || 0;
   const cachedTokens = tokens.cached_tokens || tokens.cache_read_input_tokens || 0;
   const cacheCreationTokens = tokens.cache_creation_input_tokens || 0;
@@ -497,23 +503,13 @@ export function calculateCostFromTokens(tokens, pricing) {
   // are subsets, so subtract both to avoid charging them at the full input rate.
   const nonCachedInput = Math.max(0, inputTokens - cachedTokens - cacheCreationTokens);
 
-  cost += nonCachedInput * (pricing.input / 1000000);
-
-  if (cachedTokens > 0) {
-    cost += cachedTokens * ((pricing.cached || pricing.input) / 1000000);
-  }
-
   const outputTokens = tokens.completion_tokens || tokens.output_tokens || 0;
-  cost += outputTokens * (pricing.output / 1000000);
-
   const reasoningTokens = tokens.reasoning_tokens || 0;
-  if (reasoningTokens > 0) {
-    cost += reasoningTokens * ((pricing.reasoning || pricing.output) / 1000000);
-  }
-
-  if (cacheCreationTokens > 0) {
-    cost += cacheCreationTokens * ((pricing.cache_creation || pricing.input) / 1000000);
-  }
-
-  return cost;
+  return {
+    inputCost: nonCachedInput * (pricing.input / 1000000),
+    cachedCost: cachedTokens * ((pricing.cached || pricing.input) / 1000000)
+      + cacheCreationTokens * ((pricing.cache_creation || pricing.input) / 1000000),
+    outputCost: outputTokens * (pricing.output / 1000000)
+      + reasoningTokens * ((pricing.reasoning || pricing.output) / 1000000),
+  };
 }
