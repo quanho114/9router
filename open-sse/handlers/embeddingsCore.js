@@ -14,6 +14,7 @@ export async function handleEmbeddingsCore({
   body,
   modelInfo,
   credentials,
+  signal,
   log,
   onCredentialsRefreshed,
   onRequestSuccess,
@@ -60,14 +61,14 @@ export async function handleEmbeddingsCore({
   log?.debug?.("EMBEDDINGS", `${provider.toUpperCase()} | ${model} | input_type=${Array.isArray(input) ? `array[${input.length}]` : "string"}`);
 
   let providerResponse;
+  const connectSignal = AbortSignal.timeout(FETCH_CONNECT_TIMEOUT_MS);
+  const fetchSignal = signal ? AbortSignal.any([signal, connectSignal]) : connectSignal;
   try {
     providerResponse = await fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(requestBody),
-      ...(typeof AbortSignal?.timeout === "function"
-        ? { signal: AbortSignal.timeout(FETCH_CONNECT_TIMEOUT_MS) }
-        : {}),
+      signal: fetchSignal,
     });
   } catch (error) {
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
@@ -100,6 +101,7 @@ export async function handleEmbeddingsCore({
           method: "POST",
           headers: retryHeaders,
           body: JSON.stringify(requestBody),
+          signal: fetchSignal,
         });
       } catch {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`);

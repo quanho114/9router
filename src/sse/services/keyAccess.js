@@ -35,6 +35,7 @@ import {
 import { errorResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
+import { getDailySpendDenial } from "./keySpendBudget.js";
 
 const lower = (s) => String(s).toLowerCase();
 const canonicalModel = (provider, model) => lower(`${provider}/${model}`);
@@ -102,20 +103,24 @@ export async function getKeyAccessContext(request) {
   if (!record) return null;
   const statusCheck = evaluateKeyStatus(record);
   const restricted = !!record?.access?.restricted;
-  if (statusCheck.ok && !restricted) return null;
+  const dailyLimitUsd = record.dailyLimitUsd || 0;
+  if (statusCheck.ok && !restricted && !dailyLimitUsd) return null;
+  const deniedStatus = statusCheck.ok ? await getDailySpendDenial(apiKey, dailyLimitUsd) : statusCheck;
   return {
     keyId: record.id,
     keyName: record.name || record.id,
     restricted,
     allow: restricted ? (record.access.allow || []) : [],
-    deniedStatus: statusCheck.ok ? null : statusCheck,
+    deniedStatus,
+    dailyLimitUsd,
     _sets: null,
   };
 }
 
 function keyStatusDeniedResponse(ctx) {
   log.warn("AUTH", `key-access: key "${ctx.keyName}" rejected (${ctx.deniedStatus.reason})`);
-  return errorResponse(ctx.deniedStatus.status, ctx.deniedStatus.message);
+  const headers = ctx.deniedStatus.retryAfter ? { "Retry-After": String(ctx.deniedStatus.retryAfter) } : null;
+  return errorResponse(ctx.deniedStatus.status, ctx.deniedStatus.message, headers);
 }
 
 // Resolve the allow list once per request: combo names, resolved model ids,

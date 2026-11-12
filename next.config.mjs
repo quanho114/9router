@@ -86,6 +86,10 @@ const nextConfig = {
   async rewrites() {
     return [
       {
+        source: "/.well-known/agent-card.json",
+        destination: "/api/v1/a2a/card"
+      },
+      {
         source: "/v1/v1/:path*",
         destination: "/api/v1/:path*"
       },

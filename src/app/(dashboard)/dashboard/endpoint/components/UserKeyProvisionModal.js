@@ -80,6 +80,7 @@ export default function UserKeyProvisionModal({
   const [selectedModels, setSelectedModels] = useState([]);
   const [maxInputTokens, setMaxInputTokens] = useState(1_000_000);
   const [maxOutputTokens, setMaxOutputTokens] = useState(500_000);
+  const [dailyLimitUsd, setDailyLimitUsd] = useState("");
   const [noDate, setNoDate] = useState(true);
   const [expiresAtInput, setExpiresAtInput] = useState("");
   const [resetUsage, setResetUsage] = useState(false);
@@ -105,6 +106,7 @@ export default function UserKeyProvisionModal({
       setSelectedModels(Array.isArray(initialKey.access?.allow) ? initialKey.access.allow : []);
       setMaxInputTokens(Number(initialKey.maxInputTokens) > 0 ? Number(initialKey.maxInputTokens) : 0);
       setMaxOutputTokens(Number(initialKey.maxOutputTokens) > 0 ? Number(initialKey.maxOutputTokens) : 0);
+      setDailyLimitUsd(initialKey.dailyLimitUsd > 0 ? String(initialKey.dailyLimitUsd) : "");
       if (initialKey.expiresAt) {
         setNoDate(false);
         setExpiresAtInput(toDatetimeLocalValue(initialKey.expiresAt));
@@ -118,6 +120,7 @@ export default function UserKeyProvisionModal({
       setSelectedModels([]);
       setMaxInputTokens(1_000_000);
       setMaxOutputTokens(500_000);
+      setDailyLimitUsd("");
       setNoDate(true);
       setExpiresAtInput("");
     }
@@ -409,6 +412,12 @@ export default function UserKeyProvisionModal({
       expiresAtIso = parsed.toISOString();
     }
 
+    const budget = Number(dailyLimitUsd);
+    if (!Number.isFinite(budget) || budget < 0) {
+      setErrorMsg("Enter a non-negative daily USD limit.");
+      return;
+    }
+
     const payload = {
       name: name.trim(),
       access: {
@@ -417,6 +426,7 @@ export default function UserKeyProvisionModal({
       },
       maxInputTokens: Math.max(0, Math.floor(Number(maxInputTokens) || 0)),
       maxOutputTokens: Math.max(0, Math.floor(Number(maxOutputTokens) || 0)),
+      dailyLimitUsd: budget,
       expiresAt: expiresAtIso,
     };
 
@@ -720,6 +730,22 @@ export default function UserKeyProvisionModal({
             </div>
           </div>
 
+          <label className="mt-4 flex max-w-xs flex-col gap-1.5 text-sm font-medium">
+            Daily limit (USD)
+            <input
+              type="number"
+              min={0}
+              step="any"
+              value={dailyLimitUsd}
+              placeholder="Unlimited"
+              onChange={(event) => setDailyLimitUsd(event.target.value)}
+              className="rounded-lg border border-border bg-surface-2 px-3 py-2"
+            />
+            <span className="text-xs font-normal text-text-muted">
+              Based on recorded usage at catalog prices. Resets at midnight UTC.
+            </span>
+          </label>
+
           {isEdit && (
             <div className="mt-3 pt-3 border-t border-border flex flex-wrap items-center justify-between gap-2">
               <div className="text-xs text-text-muted font-mono">
@@ -768,7 +794,7 @@ export default function UserKeyProvisionModal({
                 onClick={() => setNoDate(true)}
                 className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
                   noDate
-                    ? "bg-primary text-white"
+                    ? "bg-primary text-bg"
                     : "text-text-muted hover:text-text-main"
                 }`}
               >
@@ -782,7 +808,7 @@ export default function UserKeyProvisionModal({
                 }}
                 className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
                   !noDate
-                    ? "bg-primary text-white"
+                    ? "bg-primary text-bg"
                     : "text-text-muted hover:text-text-main"
                 }`}
               >

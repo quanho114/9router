@@ -14,6 +14,7 @@ import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { saveRequestUsage } from "@/lib/usageDb.js";
+import { withKeySpendBudget } from "../services/keySpendBudget.js";
 
 /**
  * Handle System One (Jev) decision requests for the Next.js server.
@@ -77,9 +78,14 @@ export async function handleSystemone(request) {
   const { provider, model } = modelInfo;
 
   // Per-key access control: checked before any credential lookup.
-  const keyAccessDenied = await enforceKeyAccessResolved(await getKeyAccessContext(request), modelStr, provider, model);
+  const keyAccess = await getKeyAccessContext(request);
+  const keyAccessDenied = await enforceKeyAccessResolved(keyAccess, modelStr, provider, model);
   if (keyAccessDenied) return keyAccessDenied;
 
+  return withKeySpendBudget(keyAccess, apiKey, () => dispatchSystemone(body, modelStr, modelInfo, apiKey, url));
+}
+
+async function dispatchSystemone(body, modelStr, { provider, model }, apiKey, url) {
   if (modelStr !== `${provider}/${model}`) {
     log.info("ROUTING", `${modelStr} → ${provider}/${model}`);
   } else {

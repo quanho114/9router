@@ -732,9 +732,9 @@ export default function ModelSelectModal({
                     className={`
                       px-2 py-1 rounded-xl text-xs font-medium transition-all border hover:cursor-pointer flex items-center gap-1
                       ${isSelected
-                        ? "bg-primary text-white border-primary"
+                        ? "bg-primary text-bg border-primary"
                         : addedModelValues.includes(combo.name)
-                          ? "bg-primary border-primary text-white hover:bg-primary-hover"
+                          ? "bg-primary border-primary text-bg hover:bg-primary-hover"
                           : "bg-surface border-border text-text-main hover:border-primary/50 hover:bg-primary/5"
                       }
                     `}
@@ -773,7 +773,7 @@ export default function ModelSelectModal({
                     title={isWildcardAdded ? `Click to remove wildcard ${wildcardValue}` : `Click to allow all models from ${group.name} (${wildcardValue})`}
                     className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-medium transition-all cursor-pointer border ${
                       isWildcardAdded
-                        ? "bg-primary text-white border-primary shadow-2xs hover:bg-primary-hover"
+                        ? "bg-primary text-bg border-primary shadow-2xs hover:bg-primary-hover"
                         : "text-primary border-transparent hover:bg-primary/10 hover:border-primary/20"
                     }`}
                   >
@@ -781,7 +781,7 @@ export default function ModelSelectModal({
                       <span className="material-symbols-outlined leading-none text-[12px]">check</span>
                     )}
                     <span>{group.name}</span>
-                    <span className={`text-[10px] font-mono px-1 py-0.2 rounded ${isWildcardAdded ? "bg-white/20 text-white" : "text-text-muted bg-sidebar border border-border/50"}`}>
+                    <span className={`text-[10px] font-mono px-1 py-0.2 rounded ${isWildcardAdded ? "bg-bg/10 text-bg" : "text-text-muted bg-sidebar border border-border/50"}`}>
                       {wildcardValue}
                     </span>
                   </button>
@@ -809,9 +809,9 @@ export default function ModelSelectModal({
                       ${isPlaceholder
                         ? "border-dashed border-border text-text-muted hover:border-primary/50 hover:text-primary bg-surface italic"
                         : isSelected
-                          ? "bg-primary text-white border-primary"
+                          ? "bg-primary text-bg border-primary"
                           : addedModelValues.includes(model.value)
-                            ? "bg-primary border-primary text-white hover:bg-primary-hover"
+                            ? "bg-primary border-primary text-bg hover:bg-primary-hover"
                             : "bg-surface border-border text-text-main hover:border-primary/50 hover:bg-primary/5"
                       }
                     `}

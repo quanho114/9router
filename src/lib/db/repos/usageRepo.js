@@ -3,6 +3,7 @@ import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { getMeta, setMeta } from "../helpers/metaStore.js";
 import { ensureApiKeysColumns } from "./apiKeysRepo.js";
+import { trackKeySpendWrite } from "../keySpendWrites.js";
 
 function maskApiKey(key) {
   if (!key || typeof key !== "string") return null;
@@ -247,12 +248,18 @@ export async function getActiveRequests() {
   };
 }
 
-export async function saveRequestUsage(entry) {
+export function saveRequestUsage(entry) {
+  if (!entry.timestamp) entry.timestamp = new Date().toISOString();
+  const write = persistRequestUsage(entry);
+  trackKeySpendWrite(entry.apiKey, write);
+  return write;
+}
+
+async function persistRequestUsage(entry) {
   try {
     const db = await getAdapter();
     ensureApiKeysColumns(db);
 
-    if (!entry.timestamp) entry.timestamp = new Date().toISOString();
     entry.cost = await calculateCost(entry.provider, entry.model, entry.tokens);
 
     const tokens = entry.tokens || {};

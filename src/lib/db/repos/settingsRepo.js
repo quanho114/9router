@@ -1,5 +1,7 @@
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { RESILIENCE_DEFAULTS } from "@/shared/constants/resilience.js";
+import { GUARDRAIL_DEFAULTS } from "@/shared/constants/guardrails.js";
 
 const DEFAULT_MITM_ROUTER_BASE = "http://localhost:20128";
 const DEFAULT_HEADROOM_URL = process.env.HEADROOM_URL || "http://localhost:8787";
@@ -17,6 +19,11 @@ const DEFAULT_SETTINGS = {
   comboStrategy: "fallback",
   comboStickyRoundRobinLimit: 1,
   comboStrategies: {},
+  connectionResilience: RESILIENCE_DEFAULTS,
+  gatewayMcpEnabled: false,
+  gatewayA2aEnabled: false,
+  gatewayA2aModel: "",
+  chatGuardrails: GUARDRAIL_DEFAULTS,
   capacityAdapter: {
     vision: { enabled: true, roundRobin: false, models: [] },
     pdf: { enabled: false, roundRobin: false, models: [] },
@@ -110,13 +117,27 @@ export async function getSettings() {
 }
 
 // Atomic read-merge-write inside transaction (prevents losing concurrent updates)
-export async function updateSettings(updates) {
+export async function updateSettings(updates, { comboStrategyPatches } = {}) {
   const db = await getAdapter();
   let next;
   db.transaction(function () {
     const row = db.get(`SELECT data FROM settings WHERE id = 1`);
     const current = row ? parseJson(row.data, {}) : {};
     next = { ...current, ...updates };
+    if (comboStrategyPatches?.length) {
+      const strategies = Object.assign(Object.create(null), next.comboStrategies);
+      for (const { name, patch } of comboStrategyPatches) {
+        if (!db.get(`SELECT id FROM combos WHERE name = ?`, [name])) continue;
+        const merged = { ...strategies[name], ...patch };
+        if (!merged.compression) delete merged.compression;
+        if ((!merged.fallbackStrategy || merged.fallbackStrategy === "fallback") && !merged.compression) {
+          delete strategies[name];
+        } else {
+          strategies[name] = merged;
+        }
+      }
+      next.comboStrategies = strategies;
+    }
     db.run(
       `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
       [stringifyJson(next)],

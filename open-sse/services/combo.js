@@ -3,7 +3,7 @@
  */
 
 import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
-import { unavailableResponse } from "../utils/error.js";
+import { errorResponse, unavailableResponse } from "../utils/error.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { parseModel } from "./model.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
@@ -365,6 +365,8 @@ export async function handleComboChat({
   sessionSticky = true,
   confidenceThreshold = 0.8,
   resolveSmartChoice = null,
+  signal,
+  waitForTransientCooldown = true,
 }) {
   let rotatedModels = models;
   let activeStickyModel = null;
@@ -469,6 +471,7 @@ export async function handleComboChat({
   let requestScopedResult = null;
 
   for (let i = 0; i < rotatedModels.length; i++) {
+    if (signal?.aborted) return errorResponse(499, "Request aborted");
     const modelStr = rotatedModels[i];
     log.info("COMBO", `Trying model ${i + 1}/${rotatedModels.length}: ${modelStr}`);
 
@@ -602,7 +605,7 @@ export async function handleComboChat({
       // For transient errors (503/502/504), wait for cooldown before falling through
       // so a briefly-overloaded provider gets a chance to recover rather than being
       // skipped immediately (fixes: combo falls through on transient 503)
-      if (cooldownMs && cooldownMs > 0 && cooldownMs <= 5000 &&
+      if (waitForTransientCooldown && cooldownMs && cooldownMs > 0 && cooldownMs <= 5000 &&
           (result.status === 503 || result.status === 502 || result.status === 504)) {
         log.info("COMBO", `Model ${modelStr} transient ${result.status}, waiting ${cooldownMs}ms before next`);
         await new Promise(r => setTimeout(r, cooldownMs));
@@ -660,7 +663,7 @@ export async function handleComboChat({
  * Panel responses are already translated to the client format by chatCore, so the
  * leaf content→string step reuses the translator's own extractTextContent.
  */
-function extractPanelText(json) {
+export function extractCompletionText(json) {
   if (!json || typeof json !== "object") return "";
 
   // OpenAI chat completion
@@ -698,17 +701,27 @@ function extractPanelText(json) {
  * Append a synthesized user turn to whichever message array the request format uses.
  * Preserves the original conversation + system prompt so the judge has full context.
  */
-function appendUserTurn(body, text) {
+export function appendUserTurn(body, text) {
   const next = { ...body };
   if (Array.isArray(body.messages)) {
     next.messages = [...body.messages, { role: "user", content: text }];
   } else if (Array.isArray(body.input)) {
     next.input = [...body.input, { role: "user", content: text }];
+  } else if (typeof body.input === "string") {
+    next.input = [{ role: "user", content: body.input }, { role: "user", content: text }];
   } else if (Array.isArray(body.contents)) {
     next.contents = [...body.contents, { role: "user", parts: [{ text }] }];
   } else {
     next.messages = [{ role: "user", content: text }];
   }
+  return next;
+}
+
+export function withoutChatTools(body) {
+  const { tools, tool_choice, functions, function_call, parallel_tool_calls, stream_options, ...rest } = body;
+  const next = { ...rest, stream: false };
+  if (Array.isArray(next.messages)) next.messages = flattenToolHistory(next.messages);
+  else if (Array.isArray(next.input)) next.input = flattenToolHistory(next.input);
   return next;
 }
 
@@ -817,7 +830,7 @@ function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs })
  * @param {Object} [options.tuning] - Override FUSION_DEFAULTS (minPanel, grace, timeout)
  * @returns {Promise<Response>}
  */
-export async function handleFusionChat({ body, models, handleSingleModel, log, comboName, judgeModel, tuning }) {
+export async function handleFusionChat({ body, models, handleSingleModel, log, comboName, judgeModel, tuning, inspectOutput }) {
   const panel = Array.isArray(models) ? models.filter(Boolean) : [];
   if (panel.length === 0) {
     return new Response(
@@ -837,18 +850,7 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   log.info("FUSION", `Combo "${comboName}" | panel=${panel.length} [${panel.join(", ")}] | judge=${judge} | quorum=${minPanel}`);
 
   // 1. Fan out to the panel in parallel: non-streaming, tools stripped (we want prose).
-  const { tools, tool_choice, stream_options, ...rest } = body;
-  // Fusion runs panel models non-streaming; drop stream_options too, or providers
-  // like DeepSeek reject it with "stream_options should be set along with stream = true".
-  // See issue #3024.
-  const panelBody = { ...rest, stream: false };
-
-  // Flatten tool turns to prose so panel models keep context without emitting tool_calls.
-  if (Array.isArray(panelBody.messages)) {
-    panelBody.messages = flattenToolHistory(panelBody.messages);
-  } else if (Array.isArray(panelBody.input)) {
-    panelBody.input = flattenToolHistory(panelBody.input);
-  }
+  const panelBody = withoutChatTools(body);
 
   const t0 = Date.now();
   const calls = panel.map((m) => withTimeout(handleSingleModel(panelBody, m, true), cfg.panelHardTimeoutMs));
@@ -866,7 +868,12 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
     if (!res.ok) { log.warn("FUSION", `Panel ${model} failed`, { status: res.status }); continue; }
     try {
       const json = await res.clone().json();
-      const text = extractPanelText(json);
+      let text = extractCompletionText(json);
+      if (text && inspectOutput) {
+        const result = inspectOutput(text);
+        if (result.blocked) continue;
+        text = result.text;
+      }
       if (text) {
         answers.push({ model, text });
         log.info("FUSION", `Panel ${model} ok (${text.length} chars)`);

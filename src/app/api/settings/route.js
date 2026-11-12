@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { getSettings, updateSettings } from "@/lib/localDb";
 import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
 import { resetComboRotation } from "open-sse/services/combo.js";
+import { resolveResilienceConfig } from "@/shared/constants/resilience.js";
+import { normalizeGuardrails } from "@/shared/constants/guardrails.js";
+import { normalizeComboCompression } from "@/shared/constants/comboCompression.js";
 import bcrypt from "bcryptjs";
 
 export const dynamic = "force-dynamic";
@@ -55,6 +58,33 @@ export async function PATCH(request) {
 
     // Strip protected secrets before any internal handling sets them
     for (const key of PROTECTED_SETTING_KEYS) delete body[key];
+    const comboStrategyPatches = body.comboStrategyPatches;
+    if (comboStrategyPatches !== undefined) {
+      if (!Array.isArray(comboStrategyPatches) || comboStrategyPatches.length > 1000 ||
+          comboStrategyPatches.some((item) => typeof item?.name !== "string" || !/^[a-zA-Z0-9_.-]+$/.test(item.name) ||
+            !item.patch || typeof item.patch !== "object" || Array.isArray(item.patch))) {
+        return NextResponse.json({ error: "Invalid combo strategy changes" }, { status: 400 });
+      }
+      for (const { patch } of comboStrategyPatches) {
+        if (Object.hasOwn(patch, "compression") && patch.compression !== null) {
+          patch.compression = normalizeComboCompression(patch.compression);
+        }
+      }
+      delete body.comboStrategyPatches;
+    }
+    if (Object.hasOwn(body, "connectionResilience")) {
+      body.connectionResilience = resolveResilienceConfig(body.connectionResilience);
+    }
+    if (Object.hasOwn(body, "chatGuardrails")) body.chatGuardrails = normalizeGuardrails(body.chatGuardrails);
+    for (const key of ["gatewayMcpEnabled", "gatewayA2aEnabled"]) {
+      if (Object.hasOwn(body, key)) body[key] = body[key] === true;
+    }
+    if (Object.hasOwn(body, "gatewayA2aModel")) {
+      if (typeof body.gatewayA2aModel !== "string" || body.gatewayA2aModel.length > 200) {
+        return NextResponse.json({ error: "Invalid default A2A model" }, { status: 400 });
+      }
+      body.gatewayA2aModel = body.gatewayA2aModel.trim();
+    }
 
     // If updating password, hash it
     if (body.newPassword) {
@@ -90,7 +120,7 @@ export async function PATCH(request) {
       }
     }
 
-    const settings = await updateSettings(body);
+    const settings = await updateSettings(body, { comboStrategyPatches });
 
     // Apply outbound proxy settings immediately (no restart required)
     if (
@@ -105,7 +135,7 @@ export async function PATCH(request) {
     if (
       Object.prototype.hasOwnProperty.call(body, "comboStrategy") ||
       Object.prototype.hasOwnProperty.call(body, "comboStickyRoundRobinLimit") ||
-      Object.prototype.hasOwnProperty.call(body, "comboStrategies")
+      Object.prototype.hasOwnProperty.call(body, "comboStrategies") || comboStrategyPatches?.length
     ) {
       resetComboRotation();
     }

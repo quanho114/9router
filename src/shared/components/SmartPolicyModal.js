@@ -111,7 +111,7 @@ export default function SmartPolicyModal({
                     <span
                       className={`size-4 rounded-full border flex items-center justify-center shrink-0 transition-all ${
                         isSelected
-                          ? "border-primary bg-primary text-white"
+                          ? "border-primary bg-primary text-bg"
                           : "border-border-subtle bg-surface"
                       }`}
                     >
@@ -170,7 +170,7 @@ export default function SmartPolicyModal({
                           onClick={() => setThreshold(pct)}
                           className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors ${
                             threshold === pct
-                              ? "bg-primary text-white font-semibold"
+                              ? "bg-primary text-bg font-semibold"
                               : "bg-black/5 dark:bg-white/5 text-text-muted hover:text-text-main"
                           }`}
                         >

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { deleteApiKey, getApiKeyById, updateApiKey } from "@/lib/localDb";
 import { validateKeyAccessInput, validateKeyQuotaInput } from "@/shared/utils/keyAccess.js";
+import { withDailyKeySpend } from "@/lib/db/repos/keySpendRepo.js";
 
 // GET /api/keys/[id] - Get single key
 export async function GET(request, { params }) {
@@ -10,7 +11,7 @@ export async function GET(request, { params }) {
     if (!key) {
       return NextResponse.json({ error: "Key not found" }, { status: 404 });
     }
-    return NextResponse.json({ key });
+    return NextResponse.json({ key: await withDailyKeySpend(key) });
   } catch (error) {
     console.log("Error fetching key:", error);
     return NextResponse.json({ error: "Failed to fetch key" }, { status: 500 });
@@ -32,6 +33,7 @@ export async function PUT(request, { params }) {
       usedOutputTokens,
       resetUsage,
       expiresAt,
+      dailyLimitUsd,
     } = body;
 
     const existing = await getApiKeyById(id);
@@ -60,6 +62,7 @@ export async function PUT(request, { params }) {
       usedOutputTokens,
       resetUsage,
       expiresAt,
+      dailyLimitUsd,
     });
     if (!quotaChecked.ok) {
       return NextResponse.json({ error: quotaChecked.error }, { status: 400 });
@@ -68,7 +71,7 @@ export async function PUT(request, { params }) {
 
     const updated = await updateApiKey(id, updateData);
 
-    return NextResponse.json({ key: updated });
+    return NextResponse.json({ key: await withDailyKeySpend(updated) });
   } catch (error) {
     console.log("Error updating key:", error);
     return NextResponse.json({ error: "Failed to update key" }, { status: 500 });

@@ -14,6 +14,16 @@ function rowToCombo(row) {
   };
 }
 
+function moveComboStrategy(db, previous, next) {
+  const row = db.get(`SELECT data FROM settings WHERE id = 1`);
+  const settings = row ? parseJson(row.data, {}) : {};
+  const strategies = settings.comboStrategies || {};
+  if (!Object.hasOwn(strategies, previous)) return;
+  settings.comboStrategies = next ? { ...strategies, [next]: strategies[previous] } : { ...strategies };
+  delete settings.comboStrategies[previous];
+  db.run(`UPDATE settings SET data = ? WHERE id = 1`, [stringifyJson(settings)]);
+}
+
 export async function getCombos() {
   const db = await getAdapter();
   const rows = db.all(`SELECT * FROM combos ORDER BY createdAt ASC`);
@@ -61,6 +71,9 @@ export async function updateCombo(id, data) {
       `UPDATE combos SET name = ?, kind = ?, models = ?, updatedAt = ? WHERE id = ?`,
       [merged.name, merged.kind, stringifyJson(merged.models || []), merged.updatedAt, id]
     );
+    if (merged.name !== row.name) {
+      moveComboStrategy(db, row.name, merged.name);
+    }
     result = merged;
   });
   return result;
@@ -68,6 +81,13 @@ export async function updateCombo(id, data) {
 
 export async function deleteCombo(id) {
   const db = await getAdapter();
-  const res = db.run(`DELETE FROM combos WHERE id = ?`, [id]);
-  return (res?.changes ?? 0) > 0;
+  let deleted = false;
+  db.transaction(() => {
+    const row = db.get(`SELECT name FROM combos WHERE id = ?`, [id]);
+    if (!row) return;
+    db.run(`DELETE FROM combos WHERE id = ?`, [id]);
+    moveComboStrategy(db, row.name);
+    deleted = true;
+  });
+  return deleted;
 }

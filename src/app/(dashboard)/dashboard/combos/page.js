@@ -11,6 +11,7 @@ import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
 import { resolveProviderId, AI_PROVIDERS } from "@/shared/constants/providers";
 import { getInitialCache, hasInitialCache, readCache, runWithCache, writeCache } from "@/shared/utils/dashboardCache";
+import ComboCompressionModal from "./ComboCompressionModal";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -53,6 +54,11 @@ const STRATEGY_OPTIONS = [
   { value: "round-robin", label: "Round Robin — rotate" },
   { value: "smart", label: "Smart Router — System One" },
   { value: "fusion", label: "Fusion — panel + judge" },
+  { value: "pipeline", label: "Pipeline — run models in order" },
+  { value: "thrifty", label: "Thrifty — subscription first" },
+  { value: "cost-optimized", label: "Lowest catalog price" },
+  { value: "quota-headroom", label: "Most remaining quota" },
+  { value: "reset-aware", label: "Soonest quota reset" },
 ];
 
 function getPolicyBadgeLabel(strategy = {}) {
@@ -304,19 +310,30 @@ export default function CombosPage() {
     }
   };
 
-  const pruneStrategiesForNames = (names, base = comboStrategies) => {
-    const updated = { ...base };
-    for (const name of names) delete updated[name];
-    return updated;
+  const pruneStrategiesForNames = (names) => {
+    setComboStrategies((previous) => {
+      const updated = { ...previous };
+      for (const name of names) delete updated[name];
+      return updated;
+    });
   };
 
-  const persistComboStrategies = async (updated) => {
-    await fetch("/api/settings", {
+  const persistComboStrategies = async (patches) => {
+    const response = await fetch("/api/settings", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ comboStrategies: updated }),
+      body: JSON.stringify({ comboStrategyPatches: patches }),
     });
-    setComboStrategies(updated);
+    if (!response.ok) throw new Error("Failed to save combo settings");
+    const { comboStrategies: saved = {} } = await response.json();
+    setComboStrategies((previous) => {
+      const updated = Object.assign(Object.create(null), previous);
+      for (const { name } of patches) {
+        if (Object.hasOwn(saved, name)) updated[name] = saved[name];
+        else delete updated[name];
+      }
+      return updated;
+    });
   };
 
   const handleDelete = async (id) => {
@@ -329,9 +346,7 @@ export default function CombosPage() {
         try {
           const res = await fetch(`/api/combos/${id}`, { method: "DELETE" });
           if (res.ok) {
-            if (combo?.name) {
-              await persistComboStrategies(pruneStrategiesForNames([combo.name]));
-            }
+            if (combo?.name) pruneStrategiesForNames([combo.name]);
             setCombos((prev) => prev.filter((c) => c.id !== id));
             setSelectedIds((prev) => prev.filter((x) => x !== id));
           }
@@ -356,14 +371,15 @@ export default function CombosPage() {
         setConfirmState((prev) => prev ? { ...prev, loading: true } : null);
         setBulkBusy(true);
         try {
-          const ids = selectedCombos.map((c) => c.id);
-          const names = selectedCombos.map((c) => c.name);
-          const results = await Promise.all(
-            ids.map((id) => fetch(`/api/combos/${id}`, { method: "DELETE" }))
+          const results = await Promise.allSettled(
+            selectedCombos.map(({ id }) => fetch(`/api/combos/${id}`, { method: "DELETE" }))
           );
-          const failed = results.filter((r) => !r.ok).length;
-          await persistComboStrategies(pruneStrategiesForNames(names));
-          setCombos((prev) => prev.filter((c) => !ids.includes(c.id)));
+          const deleted = selectedCombos.filter((_, index) =>
+            results[index].status === "fulfilled" && results[index].value.ok);
+          const failed = results.length - deleted.length;
+          const ids = new Set(deleted.map(({ id }) => id));
+          pruneStrategiesForNames(deleted.map(({ name }) => name));
+          setCombos((prev) => prev.filter((c) => !ids.has(c.id)));
           clearSelection();
           setConfirmState(null);
           if (failed > 0) alert(`Deleted with ${failed} failure${failed === 1 ? "" : "s"}.`);
@@ -378,22 +394,13 @@ export default function CombosPage() {
     });
   };
 
-  // Merge a per-combo strategy patch into settings.comboStrategies. Passing an empty
-  // patch (strategy back to default "fallback") drops the entry entirely.
   const handleSetComboStrategy = async (comboName, patch) => {
     try {
-      const updated = { ...comboStrategies };
-      const next = { ...(updated[comboName] || {}), ...patch };
-      // Prune to keep settings clean: default fallback with no extras = no entry.
-      if (!next.fallbackStrategy || next.fallbackStrategy === "fallback") {
-        delete updated[comboName];
-      } else {
-        updated[comboName] = next;
-      }
-
-      await persistComboStrategies(updated);
+      await persistComboStrategies([{ name: comboName, patch }]);
+      return true;
     } catch (error) {
       console.log("Error updating combo strategy:", error);
+      return false;
     }
   };
 
@@ -401,18 +408,7 @@ export default function CombosPage() {
     if (selectedCombos.length === 0 || !strategy) return;
     setBulkBusy(true);
     try {
-      const updated = { ...comboStrategies };
-      for (const combo of selectedCombos) {
-        if (!strategy || strategy === "fallback") {
-          delete updated[combo.name];
-        } else {
-          updated[combo.name] = {
-            ...(updated[combo.name] || {}),
-            fallbackStrategy: strategy,
-          };
-        }
-      }
-      await persistComboStrategies(updated);
+      await persistComboStrategies(selectedCombos.map(({ name }) => ({ name, patch: { fallbackStrategy: strategy } })));
     } catch (error) {
       console.log("Error bulk updating combo strategy:", error);
       alert("Failed to update strategy for selected combos");
@@ -443,6 +439,8 @@ export default function CombosPage() {
             <li><span className="font-medium text-text-main">Round Robin</span> — rotates models across requests to spread load</li>
             <li><span className="font-medium text-text-main">Smart Router</span> — queries a System One decision model to pick the optimal model before generation; supports Smart Switch (adaptive hysteresis), Strict Lock (1 task = 1 session, +0ms latency), and Per-Turn modes to maximize prompt-cache retention</li>
             <li><span className="font-medium text-text-main">Fusion</span> — queries all models in parallel, then a judge synthesizes one answer. Best quality, but costs the most: every request bills all panel models + the judge (N+1 calls)</li>
+            <li><span className="font-medium text-text-main">Thrifty</span> — uses available subscription accounts first, then free and lower-priced models</li>
+            <li><span className="font-medium text-text-main">Pipeline</span> — each model receives the previous step’s output. The last model replies to the client.</li>
           </ul>
           <p className="hidden text-xs text-text-muted mt-3 max-w-2xl">
             <span className="font-medium text-text-main">Cursor / Claude Default</span> create combos named exactly like those clients&apos; model IDs (e.g. <code className="font-mono">composer-2.5</code>, <code className="font-mono">opus</code>), seeded with the matching <code className="font-mono">cu/…</code> or <code className="font-mono">cc/…</code> route so traffic can hit 9router without the prefix.
@@ -698,6 +696,7 @@ function getRouterModelStatus(routerModel, activeProviders) {
 }
 
 function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy, selected = false, onToggleSelect }) {
+  const [showCompression, setShowCompression] = useState(false);
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
   const [showRouterSelect, setShowRouterSelect] = useState(false);
   const [showPolicyModal, setShowPolicyModal] = useState(false);
@@ -843,7 +842,16 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], cop
             />
           </div>
 
-          <div className="grid grid-cols-3 gap-1 sm:flex">
+          <div className="grid grid-cols-4 gap-1 sm:flex">
+            <button
+              type="button"
+              onClick={() => setShowCompression(true)}
+              className="flex flex-col items-center rounded px-2 py-1 text-text-muted transition-colors hover:bg-black/5 hover:text-primary dark:hover:bg-white/5"
+              title="Token settings"
+            >
+              <span className="material-symbols-outlined text-[18px]">compress</span>
+              <span className="text-[10px] leading-tight">Tokens</span>
+            </button>
             <button
               onClick={(e) => { e.stopPropagation(); onCopy(combo.name, `combo-${combo.id}`); }}
               className="flex flex-col items-center rounded px-2 py-1 text-text-muted transition-colors hover:bg-black/5 hover:text-primary dark:hover:bg-white/5"
@@ -873,6 +881,15 @@ function ComboCard({ combo, getCaps, comboByName = {}, activeProviders = [], cop
           </div>
         </div>
       </div>
+
+      {showCompression && (
+        <ComboCompressionModal
+          name={combo.name}
+          compression={strategy.compression}
+          onClose={() => setShowCompression(false)}
+          onSave={onSetStrategy}
+        />
+      )}
 
       {/* Judge model picker (single-select; combo members make natural judges too) */}
       {showJudgeSelect && (

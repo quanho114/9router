@@ -4,6 +4,8 @@ import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLock
 import { BACKOFF_CONFIG, MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache, getAntigravityModelQuota, getPreferredAntigravityAccount } from "./antigravityQuota.js";
+import { compareQuota, getProviderQuota } from "./providerQuota.js";
+import { connectionRetryAt } from "./connectionResilience.js";
 import * as log from "../utils/logger.js";
 
 function isConnectionModelLocked(connection, model, isAntigravity = false) {
@@ -14,6 +16,13 @@ function isConnectionModelLocked(connection, model, isAntigravity = false) {
   // Real Antigravity quota exhaustion lives in RAM (antigravityQuotaCache).
   // Any DB modelLock_* exceeding BACKOFF_CONFIG.max (5m) is a stale resetsAtMs lock.
   return new Date(expiry).getTime() - Date.now() <= BACKOFF_CONFIG.max;
+}
+
+export function connectionCanServeModel(connection, provider, model, requestedModel) {
+  if (isConnectionModelLocked(connection, model, provider === "antigravity")) return false;
+  const enabled = connection.providerSpecificData?.enabledModels;
+  return !(provider === "codex" && Array.isArray(enabled) && enabled.length &&
+    requestedModel && !enabled.includes(requestedModel));
 }
 
 // Mutex to prevent race conditions during account selection
@@ -42,6 +51,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
   const preferredConnectionId = options?.preferredConnectionId || null;
   const requestedModel = options?.requestedModel || model;
+  const quotaStrategy = options?.quotaStrategy;
   // Acquire mutex to prevent race conditions
   const currentMutex = selectionMutex;
   let resolveMutex;
@@ -55,6 +65,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings)
     if (FREE_PROVIDERS[providerId]?.noAuth) {
+      if (excludeSet.has("noauth")) return null;
       const settings = await getSettings();
       const override = (settings.providerStrategies || {})[providerId] || {};
       const strategy = override.rotateStrategy || "none";
@@ -92,13 +103,19 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Antigravity quota cache is lazy: only populated after that account returns 409/429.
     const isAntigravity = providerId === "antigravity";
     const antigravityQuotaCache = isAntigravity && model ? getAntigravityQuotaCache() : null;
+    const quotaByConnection = quotaStrategy
+      ? new Map(connections.map((c) => [c.id, getProviderQuota(providerId, c.id, model)]))
+      : null;
+    const breakerByConnection = options?.resilience
+      ? new Map(connections.map((c) => [c.id, connectionRetryAt(providerId, c.id)]))
+      : null;
 
     // Filter out model-locked, excluded, and Antigravity quota-exhausted connections.
     const availableConnections = connections.filter(c => {
       if (excludeSet.has(c.id)) return false;
-      if (isConnectionModelLocked(c, model, isAntigravity)) return false;
-      const enabled = c.providerSpecificData?.enabledModels;
-      if (providerId === "codex" && Array.isArray(enabled) && enabled.length && requestedModel && !enabled.includes(requestedModel)) return false;
+      if (!connectionCanServeModel(c, providerId, model, requestedModel)) return false;
+      if (quotaByConnection?.get(c.id)?.blockedUntil) return false;
+      if (breakerByConnection?.get(c.id)) return false;
       // Antigravity: skip if live quota exhausted for this model
       if (isAntigravity && model && antigravityQuotaCache) {
         const connQuotas = antigravityQuotaCache.get(c.id);
@@ -126,6 +143,12 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       // Find earliest persistent lock or lazy Antigravity quota-cache reset for retry timing.
       const lockedConns = connections.filter(c => isConnectionModelLocked(c, model, isAntigravity));
       const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
+      for (const quota of quotaByConnection?.values() || []) {
+        if (quota?.blockedUntil) expiries.push(new Date(quota.blockedUntil).toISOString());
+      }
+      for (const retryAt of breakerByConnection?.values() || []) {
+        if (retryAt) expiries.push(new Date(retryAt).toISOString());
+      }
       const unsupportedExpiries = [];
       if (isAntigravity && model && antigravityQuotaCache) {
         connections.forEach((c) => {
@@ -169,6 +192,12 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       if (connection) {
         log.info("AUTH", `${provider} | pinned to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
       }
+    }
+    if (!connection && (quotaStrategy === "quota-headroom" || quotaStrategy === "reset-aware")) {
+      const ranked = [...availableConnections].sort((a, b) =>
+        compareQuota(quotaStrategy, quotaByConnection.get(a.id), quotaByConnection.get(b.id))
+      );
+      if (compareQuota(quotaStrategy, quotaByConnection.get(ranked[0].id), null) < 0) connection = ranked[0];
     }
     if (connection) {
       // skip strategy

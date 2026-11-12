@@ -16,6 +16,7 @@ import { updateProviderCredentials, checkAndRefreshToken } from "../services/tok
 import { handleComboChat } from "open-sse/services/combo.js";
 import * as log from "../utils/logger.js";
 import { saveRequestUsage } from "@/lib/usageDb.js";
+import { withKeySpendBudget } from "../services/keySpendBudget.js";
 
 // Providers that don't require credentials (noAuth)
 const NO_AUTH_PROVIDERS = new Set(["sdwebui", "comfyui", "veoaifree-web"]);
@@ -70,9 +71,15 @@ export async function handleImageGeneration(request) {
   if (!body.prompt) return errorResponse(HTTP_STATUS.BAD_REQUEST, "Missing required field: prompt");
 
   // Per-key access control: requested target, before combo expansion.
-  const keyAccessDenied = await enforceKeyAccess(await getKeyAccessContext(request), modelStr);
+  const keyAccess = await getKeyAccessContext(request);
+  const keyAccessDenied = await enforceKeyAccess(keyAccess, modelStr);
   if (keyAccessDenied) return keyAccessDenied;
 
+  const options = { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint: url.pathname };
+  return withKeySpendBudget(keyAccess, apiKey, () => dispatchImage(body, modelStr, settings, options));
+}
+
+async function dispatchImage(body, modelStr, settings, options) {
   // Combo expansion: model may be a combo name → run fallback/round-robin across models
   const comboModels = await getComboModels(modelStr);
   if (comboModels) {
@@ -83,7 +90,7 @@ export async function handleImageGeneration(request) {
     return handleComboChat({
       body,
       models: comboModels,
-      handleSingleModel: (b, m) => handleSingleModelImage(b, m, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint: url.pathname }),
+      handleSingleModel: (b, m) => handleSingleModelImage(b, m, options),
       log,
       comboName: modelStr,
       comboStrategy,
@@ -91,7 +98,7 @@ export async function handleImageGeneration(request) {
     });
   }
 
-  return handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint: url.pathname });
+  return handleSingleModelImage(body, modelStr, options);
 }
 
 async function handleSingleModelImage(body, modelStr, { wantsStream, binaryOutput, preferredConnectionId, apiKey, endpoint } = {}) {

@@ -837,7 +837,7 @@ export default function BasicChatPageClient() {
                         <p className="truncate text-sm font-medium text-white">{session.title}</p>
                         <p className="mt-1 truncate text-xs text-white/50">{textValue(latestMessage?.content) || "Empty chat"}</p>
                       </div>
-                      <span className="text-[10px] text-white/40 shrink-0">{formatRelativeTime(session.updatedAt)}</span>
+                      <span className="text-[10px] text-white/65 shrink-0">{formatRelativeTime(session.updatedAt)}</span>
                     </div>
                   </button>
                 );
@@ -930,7 +930,7 @@ export default function BasicChatPageClient() {
                   onKeyDown={handleKeyDown}
                   placeholder="Message AI"
                   rows={1}
-                  className="w-full resize-none bg-transparent px-2 text-[15px] leading-6 text-white outline-none placeholder:text-white/40 custom-scrollbar max-h-[25vh] overflow-y-auto"
+                  className="w-full resize-none bg-transparent px-2 text-[15px] leading-6 text-white outline-none placeholder:text-white/65 custom-scrollbar max-h-[25vh] overflow-y-auto"
                 />
 
                 <div className="mt-2 flex items-center justify-between gap-3">
@@ -939,7 +939,7 @@ export default function BasicChatPageClient() {
                       <span className="material-symbols-outlined text-[20px]">attach_file</span>
                     </button>
                     <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleAttachFiles} />
-                    <span className="text-xs font-medium text-white/30 truncate max-w-[120px]">{activeModel ? activeModel.name : "No model"}</span>
+                    <span className="text-xs font-medium text-white/65 truncate max-w-[120px]">{activeModel ? activeModel.name : "No model"}</span>
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -957,7 +957,7 @@ export default function BasicChatPageClient() {
             </div>
           </div>
 
-          <p className="mx-auto mt-2 max-w-3xl px-4 pb-4 text-center text-[11px] text-white/30">
+          <p className="mx-auto mt-2 max-w-3xl px-4 pb-4 text-center text-[11px] text-white/65">
             Model list is filtered from connected providers.
           </p>
         </div>

@@ -4,6 +4,10 @@ import { useState, useEffect, useRef } from "react";
 import { Card, CardSkeleton, Button, Toggle, Input } from "@/shared/components";
 import Modal, { ConfirmModal } from "@/shared/components/Modal";
 import LanguageSwitcher from "@/shared/components/LanguageSwitcher";
+import ConnectionResilienceCard from "./ConnectionResilienceCard";
+import AgentProtocolsCard from "./AgentProtocolsCard";
+import ChatGuardrailsCard from "./ChatGuardrailsCard";
+import EvalSuitesCard from "./EvalSuitesCard";
 import { useTheme } from "@/shared/hooks/useTheme";
 import { cn } from "@/shared/utils/cn";
 import { APP_CONFIG } from "@/shared/constants/config";
@@ -20,7 +24,25 @@ function getLocaleFromCookie() {
   return normalizeLocale(value);
 }
 
+const SETTINGS_SECTIONS = [
+  ["general", "General"],
+  ["security", "Security & SSO"],
+  ["gateway", "Gateway"],
+  ["network", "Network & Logs"],
+  ["evals", "Eval Suites"],
+];
+
+function SettingsPanel({ id, active, children }) {
+  return (
+    <section id={`settings-${id}`} hidden={!active} aria-labelledby={`settings-nav-${id}`}>
+      <div className="grid min-w-0 items-start gap-4 xl:grid-cols-2 xl:gap-5">{children}</div>
+    </section>
+  );
+}
+
 export default function ProfilePage() {
+  const [section, setSection] = useState("general");
+  const sectionNav = useRef(null);
   const { theme, setTheme, isDark } = useTheme();
   const initialSettings = getInitialCache("settings", null);
   const [locale, setLocale] = useState(() => getLocaleFromCookie());
@@ -783,8 +805,7 @@ export default function ProfilePage() {
 
   if (loading) {
     return (
-      <div className="max-w-2xl mx-auto px-4 sm:px-0 flex flex-col gap-6">
-        <CardSkeleton />
+      <div className="mx-auto grid max-w-7xl items-start gap-4 xl:grid-cols-2 xl:gap-5">
         <CardSkeleton />
         <CardSkeleton />
       </div>
@@ -792,8 +813,23 @@ export default function ProfilePage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-4 sm:px-0">
-      <div className="flex flex-col gap-6">
+    <div className="mx-auto w-full min-w-0 max-w-7xl">
+      <nav ref={sectionNav} aria-label="Settings sections"
+        className="sticky top-0 z-20 mb-5 grid grid-cols-2 gap-1 rounded-xl border border-border bg-surface p-1 sm:flex sm:w-fit sm:flex-wrap">
+        {SETTINGS_SECTIONS.map(([id, label]) => (
+          <button key={id} id={`settings-nav-${id}`} type="button"
+            aria-pressed={section === id} aria-controls={`settings-${id}`}
+            onClick={() => {
+              setSection(id);
+              sectionNav.current?.closest(".overflow-y-auto")?.scrollTo({ top: 0 });
+            }}
+            className={cn("min-h-11 rounded-lg px-3 text-left text-sm font-medium transition-colors sm:px-4",
+              section === id ? "bg-surface-3 text-text-main" : "text-text-muted hover:bg-surface-2 hover:text-text-main")}>
+            {label}
+          </button>
+        ))}
+      </nav>
+      <SettingsPanel id="general" active={section === "general"}>
         {/* Local Mode Info */}
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
@@ -887,6 +923,8 @@ export default function ProfilePage() {
           </button>
         </Card>
 
+      </SettingsPanel>
+      <SettingsPanel id="security" active={section === "security"}>
         {/* Security */}
         <Card>
           <div className="flex items-center gap-3 mb-4">
@@ -1463,14 +1501,12 @@ export default function ProfilePage() {
           )}
         </Card>
 
+      </SettingsPanel>
+      <SettingsPanel id="gateway" active={section === "gateway"}>
+        <div className="flex min-w-0 flex-col gap-4 xl:gap-5">
         {/* Routing Preferences */}
         <Card>
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 rounded-lg bg-blue-500/10 text-blue-500 shrink-0">
-              <span className="material-symbols-outlined text-[20px]">route</span>
-            </div>
-            <h3 className="text-base sm:text-lg font-semibold">Routing Strategy</h3>
-          </div>
+          <h3 className="mb-3 text-base font-semibold sm:text-lg">Routing strategy</h3>
           <div className="flex flex-col gap-4">
             <div className="flex items-start sm:items-center justify-between gap-4">
               <div className="flex-1 min-w-0">
@@ -1554,6 +1590,21 @@ export default function ProfilePage() {
           </div>
         </Card>
 
+        <ConnectionResilienceCard settings={settings.connectionResilience}
+          onSaved={(patch) => setSettings((current) => ({ ...current, ...patch }))} />
+        </div>
+        <div className="flex min-w-0 flex-col gap-4 xl:gap-5">
+        <AgentProtocolsCard settings={settings}
+          onSaved={(patch) => setSettings((current) => ({ ...current, ...patch }))} />
+        <ChatGuardrailsCard settings={settings.chatGuardrails}
+          onSaved={(patch) => setSettings((current) => ({ ...current, ...patch }))} />
+        </div>
+      </SettingsPanel>
+      <SettingsPanel id="evals" active={section === "evals"}>
+        <div className="min-w-0 xl:col-span-2"><EvalSuitesCard /></div>
+      </SettingsPanel>
+
+      <SettingsPanel id="network" active={section === "network"}>
         {/* Network */}
         <Card>
           <div className="flex items-center gap-3 mb-4">
@@ -1649,6 +1700,8 @@ export default function ProfilePage() {
           </div>
         </Card>
 
+      </SettingsPanel>
+      <section hidden={section !== "general"} className="mt-4">
         {/* Account actions */}
         <div className="flex flex-col sm:flex-row gap-2">
           <Button
@@ -1675,7 +1728,7 @@ export default function ProfilePage() {
           <p>{APP_CONFIG.name} v{APP_CONFIG.version}</p>
           <p className="mt-1">{isRemoteHost ? "Remote Mode" : "Local Mode - All data stored on your machine"}</p>
         </div>
-      </div>
+      </section>
 
       <LanguageSwitcher
         hideTrigger

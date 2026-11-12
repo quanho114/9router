@@ -27,9 +27,7 @@ export async function GET(request) {
     start(controller) {
       // Send all buffered logs immediately on connect
       const buffered = getConsoleLogs();
-      if (buffered.length > 0) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "init", logs: buffered })}\n\n`));
-      }
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "init", logs: buffered })}\n\n`));
 
       // Push new lines as they arrive
       state.send = (line) => {

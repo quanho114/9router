@@ -14,7 +14,13 @@ const API_KEY_EXTRA_COLUMNS = [
   ["usedInputTokens", "INTEGER DEFAULT 0"],
   ["usedOutputTokens", "INTEGER DEFAULT 0"],
   ["expiresAt", "TEXT"],
+  ["dailyLimitUsd", "REAL DEFAULT 0"],
 ];
+
+export function normalizeDailyLimitUsd(value) {
+  const limit = Number(value);
+  return Number.isFinite(limit) && limit > 0 ? limit : 0;
+}
 
 export function ensureApiKeysColumns(db) {
   if (!db || _ensuredAdapters.has(db)) return;
@@ -53,6 +59,7 @@ function rowToKey(row) {
     usedInputTokens,
     usedOutputTokens,
     expiresAt,
+    dailyLimitUsd: normalizeDailyLimitUsd(row.dailyLimitUsd),
   };
 }
 
@@ -124,10 +131,11 @@ export async function createApiKey(name, machineId, options = {}) {
     usedInputTokens: 0,
     usedOutputTokens: 0,
     expiresAt,
+    dailyLimitUsd: normalizeDailyLimitUsd(options.dailyLimitUsd),
   };
   const cols = keyAccessToColumns(apiKey.access.restricted ? apiKey.access : KEY_ACCESS_UNRESTRICTED);
   db.run(
-    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow, maxInputTokens, maxOutputTokens, usedInputTokens, usedOutputTokens, expiresAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow, maxInputTokens, maxOutputTokens, usedInputTokens, usedOutputTokens, expiresAt, dailyLimitUsd) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       apiKey.id,
       apiKey.key,
@@ -142,6 +150,7 @@ export async function createApiKey(name, machineId, options = {}) {
       0,
       0,
       apiKey.expiresAt,
+      apiKey.dailyLimitUsd,
     ]
   );
   return apiKey;
@@ -162,7 +171,7 @@ export async function updateApiKey(id, data) {
     const usedOutputTokens = Number(merged.usedOutputTokens) > 0 ? Math.floor(Number(merged.usedOutputTokens)) : 0;
     const expiresAt = typeof merged.expiresAt === "string" && merged.expiresAt.trim() ? merged.expiresAt.trim() : null;
     db.run(
-      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, accessRestricted = ?, accessAllow = ?, maxInputTokens = ?, maxOutputTokens = ?, usedInputTokens = ?, usedOutputTokens = ?, expiresAt = ? WHERE id = ?`,
+      `UPDATE apiKeys SET key = ?, name = ?, machineId = ?, isActive = ?, accessRestricted = ?, accessAllow = ?, maxInputTokens = ?, maxOutputTokens = ?, usedInputTokens = ?, usedOutputTokens = ?, expiresAt = ?, dailyLimitUsd = ? WHERE id = ?`,
       [
         merged.key,
         merged.name,
@@ -175,6 +184,7 @@ export async function updateApiKey(id, data) {
         usedInputTokens,
         usedOutputTokens,
         expiresAt,
+        normalizeDailyLimitUsd(merged.dailyLimitUsd),
         id,
       ]
     );

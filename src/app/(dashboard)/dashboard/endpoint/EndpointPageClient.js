@@ -1260,6 +1260,11 @@ export default function APIPageClient({ machineId }) {
                       max={key.maxOutputTokens || 0}
                       accent="violet"
                     />
+                    {key.dailyLimitUsd > 0 && (
+                      <span className="text-xs tabular-nums text-text-muted" title="Recorded daily spend. Resets at midnight UTC.">
+                        ${(key.dailySpendUsd || 0).toLocaleString("en-US", { maximumFractionDigits: 6 })} / ${key.dailyLimitUsd.toLocaleString("en-US", { maximumFractionDigits: 6 })} today
+                      </span>
+                    )}
                   </div>
 
                   {/* Right: Actions (Edit Quota & Models, Reset Counter, Revoke/Restore, Delete) */}

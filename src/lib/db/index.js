@@ -3,6 +3,7 @@ import { getAdapter } from "./driver.js";
 import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
 import { keyAccessFromColumns, keyAccessToColumns, validateKeyAccessInput } from "@/shared/utils/keyAccess.js";
 import { KEY_ACCESS_UNRESTRICTED } from "@/shared/constants/keyAccess.js";
+import { normalizeDailyLimitUsd } from "./repos/apiKeysRepo.js";
 
 // Settings
 export {
@@ -92,6 +93,7 @@ export async function exportDb() {
       usedInputTokens: Number(r.usedInputTokens) > 0 ? Math.floor(Number(r.usedInputTokens)) : 0,
       usedOutputTokens: Number(r.usedOutputTokens) > 0 ? Math.floor(Number(r.usedOutputTokens)) : 0,
       expiresAt: typeof r.expiresAt === "string" && r.expiresAt.trim() ? r.expiresAt.trim() : null,
+      dailyLimitUsd: normalizeDailyLimitUsd(r.dailyLimitUsd),
     })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
@@ -166,8 +168,8 @@ export async function importDb(payload) {
       const usedOutputTokens = Number(k.usedOutputTokens) > 0 ? Math.floor(Number(k.usedOutputTokens)) : 0;
       const expiresAt = typeof k.expiresAt === "string" && k.expiresAt.trim() ? k.expiresAt.trim() : null;
       db.run(
-        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow, maxInputTokens, maxOutputTokens, usedInputTokens, usedOutputTokens, expiresAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(), cols.accessRestricted, cols.accessAllow, maxInputTokens, maxOutputTokens, usedInputTokens, usedOutputTokens, expiresAt]
+        `INSERT OR REPLACE INTO apiKeys(id, key, name, machineId, isActive, createdAt, accessRestricted, accessAllow, maxInputTokens, maxOutputTokens, usedInputTokens, usedOutputTokens, expiresAt, dailyLimitUsd) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [k.id, k.key, k.name || null, k.machineId || null, k.isActive === false ? 0 : 1, k.createdAt || new Date().toISOString(), cols.accessRestricted, cols.accessAllow, maxInputTokens, maxOutputTokens, usedInputTokens, usedOutputTokens, expiresAt, normalizeDailyLimitUsd(k.dailyLimitUsd)]
       );
     }
     for (const c of payload.combos || []) {

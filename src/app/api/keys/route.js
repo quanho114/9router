@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getApiKeys, createApiKey } from "@/lib/localDb";
 import { getConsistentMachineId } from "@/shared/utils/machineId";
 import { validateKeyAccessInput, validateKeyQuotaInput } from "@/shared/utils/keyAccess.js";
+import { withDailyKeySpend } from "@/lib/db/repos/keySpendRepo.js";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +10,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const keys = await getApiKeys();
-    return NextResponse.json({ keys });
+    return NextResponse.json({ keys: await Promise.all(keys.map(withDailyKeySpend)) });
   } catch (error) {
     console.log("Error fetching keys:", error);
     return NextResponse.json({ error: "Failed to fetch keys" }, { status: 500 });
@@ -20,7 +21,7 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { name, access, maxInputTokens, maxOutputTokens, expiresAt } = body;
+    const { name, access, maxInputTokens, maxOutputTokens, expiresAt, dailyLimitUsd } = body;
 
     if (!name || typeof name !== "string" || !name.trim()) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -33,7 +34,7 @@ export async function POST(request) {
       options.access = checked.value;
     }
 
-    const quotaChecked = validateKeyQuotaInput({ maxInputTokens, maxOutputTokens, expiresAt });
+    const quotaChecked = validateKeyQuotaInput({ maxInputTokens, maxOutputTokens, expiresAt, dailyLimitUsd });
     if (!quotaChecked.ok) {
       return NextResponse.json({ error: quotaChecked.error }, { status: 400 });
     }

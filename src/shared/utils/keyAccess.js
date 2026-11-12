@@ -127,6 +127,16 @@ export function checkKeyStatus(record, nowMs = Date.now()) {
 export function validateKeyQuotaInput(input = {}) {
   const out = {};
 
+  if (input.dailyLimitUsd !== undefined) {
+    const raw = input.dailyLimitUsd;
+    const limit = raw === null ? 0 : Number(raw);
+    if ((raw !== null && typeof raw !== "number" && typeof raw !== "string") ||
+        !Number.isFinite(limit) || limit < 0) {
+      return { ok: false, error: "dailyLimitUsd must be a non-negative amount in USD" };
+    }
+    out.dailyLimitUsd = limit;
+  }
+
   if (input.maxInputTokens !== undefined) {
     if (input.maxInputTokens === null || input.maxInputTokens === "") {
       out.maxInputTokens = 0;

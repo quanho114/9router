@@ -661,6 +661,26 @@ Seamless translation between formats:
 - Name your combos for easy access
 - Share combos across devices with Cloud Sync
 
+### Gateway routing and controls
+
+- **Dashboard → Combos** offers Thrifty, Lowest catalog price, Most remaining quota, Soonest quota reset, and Pipeline. Thrifty tries available subscription providers before public, free, and priced models. Quota ranking uses known windows and existing provider cooldowns. Pipeline runs the listed models in order, passes each intermediate text answer to the next model, and lets the last model stream the reply.
+- **Combos → Tokens** overrides each token saver for one combo. Duplicate tool output compression keeps the first result in the current history. Set an embedding model to enable a five-minute semantic response cache for single-turn, non-streaming Chat Completions with `temperature: 0`. The key must have access to both the combo and the embedding model. `X-9Router-Cache` reports `exact` or `semantic` hits. Send `Cache-Control: no-cache` to bypass it.
+- **Dashboard → Endpoint → API key settings** can set a daily USD limit. It uses recorded usage at catalog prices and resets at 00:00 UTC. A capped key admits one metered request at a time. A request can exceed the remaining allowance before its final usage is known.
+- **Dashboard → Profile** has opt-in connection resilience and chat guardrails. Connection resilience limits concurrent chat requests per connection and opens a circuit on repeated upstream 5xx errors. Guardrails can mask common PII and credentials or reject known prompt-injection patterns in chat text.
+
+### Agent protocols and evals
+
+Enable the protocols in **Dashboard → Profile → Agent protocols**. Requests use a 9router API key in the `Authorization: Bearer <key>` header and follow that key’s model permissions.
+
+| Endpoint | Operations |
+| --- | --- |
+| `POST /v1/mcp` | Streamable HTTP with JSON responses. The available tools are `list_models` and `chat`. Pass `{ "model": "my-combo", "prompt": "Hello" }` as `chat` arguments. |
+| `GET /.well-known/agent-card.json` | Discover the A2A 0.3 agent. Set `GATEWAY_PUBLIC_ORIGIN` when the card should advertise a reverse proxy’s public origin. |
+| `POST /v1/a2a` | JSON-RPC `message/send`, `message/stream`, `tasks/get`, `tasks/cancel`, and `tasks/resubscribe`. Send a user message with a unique `messageId` and text parts. Pick a default model in Profile or send `params.metadata.model`. Tasks are single-turn and expire from memory after 15 minutes. |
+| `/api/settings/evals` | Manage saved eval suites with a dashboard session. Run one with `POST /api/settings/evals/{id}/run` and an inference API key. Each case checks exact text, a substring, or an HTTP status. |
+
+Browser requests to the protocol endpoints use the local origin by default. Configure `GATEWAY_PROTOCOL_ORIGINS` with a comma-separated list of deployment origins if needed. You can also create and run eval suites from **Dashboard → Profile → Eval suites**.
+
 ### 📝 Request Logging
 
 - Enable debug mode for full request/response logs

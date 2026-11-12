@@ -25,11 +25,25 @@ export function isFreeModel(model) {
   return FREE_MODEL_NAMESPACES.some((ns) => lower.startsWith(ns));
 }
 
+// Gemini API Standard rates. Antigravity estimates use the same reference rates.
+// https://ai.google.dev/gemini-api/docs/pricing#gemini-4-argon
+const ARGON_STANDARD_START = Date.UTC(2026, 11, 1);
+const ARGON_INTRO_PRICING = Object.freeze({ input: 2, output: 10, cached: 0.10, reasoning: 10 });
+const ARGON_STANDARD_PRICING = Object.freeze({ input: 4, output: 20, cached: 0.20, reasoning: 20 });
+
+function getArgonPricing() {
+  return Date.now() < ARGON_STANDARD_START ? ARGON_INTRO_PRICING : ARGON_STANDARD_PRICING;
+}
+
 /**
  * Canonical model pricing — provider-agnostic.
  * Cover all known models; deduplicated across providers.
  */
 export const MODEL_PRICING = {
+  get "gemini-4-argon"() { return getArgonPricing(); },
+  get "gemini-4-argon-high"() { return getArgonPricing(); },
+  get "gemini-4-argon-medium"() { return getArgonPricing(); },
+  get "gemini-4-argon-low"() { return getArgonPricing(); },
   // === Anthropic / Claude ===
   "claude-opus-4-6":              { input: 5.00,  output: 25.00, cached: 0.50,  reasoning: 25.00,  cache_creation: 6.25  },
   "claude-opus-4-5-20251101":     { input: 5.00,  output: 25.00, cached: 0.50,  reasoning: 25.00,  cache_creation: 6.25  },
@@ -431,6 +445,9 @@ export function getPricingForModel(provider, model) {
 
   // 3. Canonical model pricing (strip vendor prefix if needed: "deepseek/deepseek-chat" → "deepseek-chat")
   const baseModel = model.includes("/") ? model.split("/").pop() : model;
+  if (/^gemini-4-argon-(?:high|medium|low)\((?:high|medium|low)\)$/.test(baseModel)) {
+    return getArgonPricing();
+  }
   if (MODEL_PRICING[baseModel]) return MODEL_PRICING[baseModel];
   if (MODEL_PRICING[model]) return MODEL_PRICING[model];
 

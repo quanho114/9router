@@ -14,6 +14,7 @@ import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { saveRequestUsage } from "@/lib/usageDb.js";
+import { withKeySpendBudget } from "../services/keySpendBudget.js";
 
 function exactEmbeddingUsage(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw) || raw.estimated === true) return null;
@@ -30,7 +31,7 @@ function exactEmbeddingUsage(raw) {
  *
  * @param {Request} request
  */
-export async function handleEmbeddings(request) {
+export async function handleEmbeddings(request, { withinMeteredRequest = false } = {}) {
   let body;
   try {
     body = await request.json();
@@ -85,9 +86,15 @@ export async function handleEmbeddings(request) {
   const { provider, model } = modelInfo;
 
   // Per-key access control: checked before any credential lookup.
-  const keyAccessDenied = await enforceKeyAccessResolved(await getKeyAccessContext(request), modelStr, provider, model);
+  const keyAccess = await getKeyAccessContext(request);
+  const keyAccessDenied = await enforceKeyAccessResolved(keyAccess, modelStr, provider, model);
   if (keyAccessDenied) return keyAccessDenied;
 
+  const dispatch = () => dispatchEmbeddings(body, modelStr, modelInfo, apiKey, url, request.signal);
+  return withinMeteredRequest ? dispatch() : withKeySpendBudget(keyAccess, apiKey, dispatch);
+}
+
+async function dispatchEmbeddings(body, modelStr, { provider, model }, apiKey, url, signal) {
   if (modelStr !== `${provider}/${model}`) {
     log.info("ROUTING", `${modelStr} → ${provider}/${model}`);
   } else {
@@ -100,6 +107,7 @@ export async function handleEmbeddings(request) {
   let lastStatus = null;
 
   while (true) {
+    if (signal?.aborted) return errorResponse(499, "Request aborted");
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
 
     // All accounts unavailable
@@ -126,6 +134,7 @@ export async function handleEmbeddings(request) {
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
+      signal,
       log,
       onCredentialsRefreshed: async (newCreds) => {
         await updateProviderCredentials(credentials.connectionId, {
@@ -155,6 +164,7 @@ export async function handleEmbeddings(request) {
       return result.response;
     }
 
+    if (signal?.aborted) return result.response;
     const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model);
 
     if (shouldFallback) {
