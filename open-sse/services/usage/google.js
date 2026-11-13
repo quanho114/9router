@@ -301,11 +301,17 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
       // Silently ignore — weekly is best-effort
     }
 
+    const hydrogenDisabled = data.models?.["gemini-4-hydrogen-disabled"]?.disabled === true;
+    const hydrogenAvailable = !isFreeTier && !hydrogenDisabled && Object.entries(data.models || {}).some(
+      ([id, info]) => /^gemini-4-hydrogen-(?:low|medium|high|xhigh)$/.test(id) && !info?.disabled && !info?.isInternal
+    );
+
     return {
       plan: subscriptionInfo?.currentTier?.name || "Unknown",
       quotas,
       subscriptionInfo,
-      hydrogenDisabled: data.models?.["gemini-4-hydrogen-disabled"]?.disabled === true,
+      hydrogenDisabled,
+      hydrogenAvailable,
     };
   } catch (error) {
     console.error("[Antigravity Usage] Error:", error.message, error.cause);

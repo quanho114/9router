@@ -67,6 +67,7 @@ describe("Antigravity quota tracker: Gemini 3.8 Flash usage bars", () => {
     const { getAntigravityUsage } = await import("../../open-sse/services/usage/google.js");
     const enabled = await getAntigravityUsage("access-token", {});
     expect(enabled.hydrogenDisabled).toBe(false);
+    expect(enabled.hydrogenAvailable).toBe(true);
     expect(enabled.quotas["gemini-4-hydrogen-xhigh"]).toMatchObject({ remainingPercentage: 45 });
 
     proxyAwareFetch.mockImplementationOnce(async () => ({ ok: false, status: 403 }));
@@ -76,6 +77,17 @@ describe("Antigravity quota tracker: Gemini 3.8 Flash usage bars", () => {
     }));
     const disabled = await getAntigravityUsage("access-token", {});
     expect(disabled.hydrogenDisabled).toBe(true);
+    expect(disabled.hydrogenAvailable).toBe(false);
     expect(disabled.quotas).not.toHaveProperty("gemini-4-hydrogen-disabled");
+  });
+
+  it("keeps Hydrogen unavailable for free-tier accounts even if a slug is listed", async () => {
+    const { getAntigravityUsage } = await import("../../open-sse/services/usage/google.js");
+    proxyAwareFetch.mockImplementationOnce(async () => ({
+      ok: true,
+      json: async () => ({ cloudaicompanionProject: "project-1", paidTier: { id: "free-tier" } }),
+    }));
+    const usage = await getAntigravityUsage("access-token", {});
+    expect(usage.hydrogenAvailable).toBe(false);
   });
 });

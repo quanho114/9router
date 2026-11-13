@@ -489,7 +489,7 @@ export function parseQuotaData(provider, data) {
           if (hasGeminiSession) {
             summaryModels.filter(([k]) => k === "gemini_session").forEach(([modelKey, quota]) => {
               normalizedQuotas.push({
-                name: quota.displayName || modelKey,
+                name: data.hydrogenAvailable === true ? "Gemini Hydrogen (5h)" : quota.displayName || modelKey,
                 modelKey,
                 used: quota.used || 0,
                 total: quota.total || 0,
@@ -521,7 +521,7 @@ export function parseQuotaData(provider, data) {
           if (hasGeminiWeekly) {
             summaryModels.filter(([k]) => k === "gemini_weekly").forEach(([modelKey, quota]) => {
               normalizedQuotas.push({
-                name: quota.displayName || modelKey,
+                name: data.hydrogenAvailable === true ? "Gemini Hydrogen (Weekly)" : quota.displayName || modelKey,
                 modelKey,
                 used: quota.used || 0,
                 total: quota.total || 0,

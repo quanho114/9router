@@ -123,8 +123,13 @@ describe("Antigravity dashboard normalization with weekly quotas", () => {
     const claudeSessionIdx = keys.indexOf("claude_gpt_session");
     const claudeWeeklyIdx = keys.indexOf("claude_gpt_weekly");
 
+    expect(quotas[geminiSessionIdx].name).toBe("Gemini (5h)");
     expect(geminiSessionIdx).toBeLessThan(geminiWeeklyIdx);
     expect(claudeSessionIdx).toBeLessThan(claudeWeeklyIdx);
+
+    const withHydrogen = parseQuotaData("antigravity", { ...dataWithBoth, hydrogenAvailable: true });
+    expect(withHydrogen[geminiSessionIdx]).toEqual({ ...quotas[geminiSessionIdx], name: "Gemini Hydrogen (5h)" });
+    expect(withHydrogen[geminiWeeklyIdx]).toEqual({ ...quotas[geminiWeeklyIdx], name: "Gemini Hydrogen (Weekly)" });
   });
 
   it("excludes redundant duplicates when individual models mirror weekly reset and summary is present", () => {
