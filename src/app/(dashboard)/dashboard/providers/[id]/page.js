@@ -1325,7 +1325,7 @@ export default function ProviderDetailPage() {
               isFree={model.isFree}
               onDisable={() => handleDisableModel(model.id)}
               caps={getCaps(`${providerId}/${model.id}`)}
-              thinkingSuffix={resolveThinkingSuffix(model.id)}
+              thinkingSuffix={model.fixedThinkingTier ? null : resolveThinkingSuffix(model.id)}
             />
           );
         })}

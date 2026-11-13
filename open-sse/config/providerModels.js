@@ -92,6 +92,11 @@ export function getModelMeta(aliasOrId, modelId) {
   return findModel(PROVIDER_MODELS[aliasOrId], modelId, aliasOrId) || null;
 }
 
+function normalizeModelTier(effort, hasXhighTier) {
+  if (effort === "xhigh" || effort === "max") return hasXhighTier ? "xhigh" : "high";
+  return effort === "minimal" ? "low" : effort;
+}
+
 export function getModelUpstreamId(aliasOrId, modelId, clientBody = null) {
   // Split off thinking suffix "(level)" so lookup hits the base id; re-append it to
   // the result so downstream applyThinking still sees the suffix (body.model is stripped separately).
@@ -99,15 +104,17 @@ export function getModelUpstreamId(aliasOrId, modelId, clientBody = null) {
   const suffix = sufMatch ? sufMatch[0] : "";
   const baseId = suffix ? modelId.slice(0, sufMatch.index).trim() : modelId;
   const models = PROVIDER_MODELS[aliasOrId];
+  const baseModel = findModel(models, baseId, aliasOrId);
+  if (baseModel?.fixedThinkingTier) return baseModel.upstreamModelId;
 
   // Resolve requested thinking level from suffix or client request body
   const rawSuffix = suffix ? suffix.slice(1, -1).trim().toLowerCase() : "";
-  let tier = rawSuffix === "xhigh" || rawSuffix === "max" ? "high" : rawSuffix === "minimal" ? "low" : rawSuffix;
+  const hasXhighTier = !!findModel(models, `${baseId}-xhigh`, aliasOrId);
+  let tier = normalizeModelTier(rawSuffix, hasXhighTier);
   if (!tier && clientBody && typeof clientBody === "object") {
     const rawEffort = clientBody.reasoning_effort || clientBody.output_config?.effort || (typeof clientBody.reasoning === "object" ? clientBody.reasoning?.effort : null);
     if (typeof rawEffort === "string" && rawEffort) {
-      const v = rawEffort.toLowerCase().trim();
-      tier = v === "xhigh" || v === "max" ? "high" : v === "minimal" ? "low" : v;
+      tier = normalizeModelTier(rawEffort.toLowerCase().trim(), hasXhighTier);
     } else if (clientBody.thinking && typeof clientBody.thinking === "object") {
       const b = Number(clientBody.thinking.budget_tokens);
       if (Number.isFinite(b) && b > 0) {
@@ -118,7 +125,7 @@ export function getModelUpstreamId(aliasOrId, modelId, clientBody = null) {
 
   // Look for tiered variant first if a tier was requested (e.g. gemini-3.8-flash-high)
   const tieredId = tier ? `${baseId}-${tier}` : null;
-  const found = (tieredId && findModel(models, tieredId, aliasOrId)) || findModel(models, baseId, aliasOrId);
+  const found = (tieredId && findModel(models, tieredId, aliasOrId)) || baseModel;
   const resolvedId = found?.upstreamModelId || found?.id;
   if (resolvedId) {
     const presetMatch = resolvedId.match(/\([^()]+\)\s*$/);

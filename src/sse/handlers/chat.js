@@ -14,6 +14,7 @@ import {
   getAntigravityQuotaCache,
   getAntigravityModelFamily,
   getAntigravityModelQuota,
+  isAntigravityHydrogenModel,
   refreshAntigravityQuota,
 } from "../services/antigravityQuota.js";
 import { getSettings, updateProviderConnection } from "@/lib/localDb";
@@ -499,15 +500,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     ticket?.complete(!signal?.aborted && result.status >= 500 ? "failure" : "cancel");
     if (signal?.aborted || result.status === 499) return result.response;
 
-    // Antigravity 409/429 (or 400/403/404 on Argon models for free-tier accounts):
-    // refresh live quota to detect exhausted/unsupported tier before locking.
+    // Check live quota and model availability before locking the account.
     let quotaResetMs = null;
     let resetsAtMs = result.resetsAtMs;
-    const isAntigravityArgonTierError =
-      provider === "antigravity" &&
-      getAntigravityModelFamily(model) === "argon" &&
-      (result.status === 400 || result.status === 403 || result.status === 404);
-    if (provider === "antigravity" && (result.status === 409 || result.status === 429 || isAntigravityArgonTierError)) {
+    const isTierError = (getAntigravityModelFamily(model) === "argon" && result.status === 400) ||
+      ((result.status === 403 || result.status === 404) &&
+        (getAntigravityModelFamily(model) === "argon" || isAntigravityHydrogenModel(model)));
+    if (provider === "antigravity" && (result.status === 409 || result.status === 429 || isTierError)) {
       quotaResetMs = await handleAntigravityQuotaError(
         credentials.connectionId, result.status, model,
         refreshedCredentials.accessToken, credentials.providerSpecificData

@@ -28,7 +28,7 @@ vi.mock("open-sse/services/usage/google.js", () => ({
 }));
 vi.mock("@/sse/utils/logger.js", () => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn() }));
 
-const { getAntigravityQuotaCache, getAntigravityModelQuota, handleAntigravityQuotaError, recordAntigravityHealthyAccount, refreshAntigravityQuota, clearAntigravityStrikes } = await import("@/sse/services/antigravityQuota.js");
+const { getAntigravityQuotaCache, getAntigravityModelQuota, handleAntigravityQuotaError, recordAntigravityHealthyAccount, refreshAntigravityQuota, clearAntigravityStrikes, seedAntigravityQuotaCache } = await import("@/sse/services/antigravityQuota.js");
 const { getProviderCredentials, markAccountUnavailable } = await import("@/sse/services/auth.js");
 
 const MODEL = "claude-opus-4-6-thinking";
@@ -42,6 +42,19 @@ beforeEach(() => {
 });
 
 describe("Antigravity quota-aware routing", () => {
+  it("skips an account whose catalog disables Hydrogen while leaving Flash routable", async () => {
+    const model = "gemini-4-hydrogen(xhigh)";
+    const accounts = [{ id: "ag-hydrogen-disabled" }, { id: "ag-hydrogen-enabled" }];
+    mocks.getProviderConnections.mockResolvedValue(accounts.map((account) => ({ ...account, isActive: true })));
+    mocks.getAntigravityUsage.mockResolvedValue({ quotas: {}, hydrogenDisabled: true });
+
+    expect(await handleAntigravityQuotaError(accounts[0].id, 404, model, "token", {})).toBeGreaterThan(Date.now());
+    expect(await getProviderCredentials("antigravity", null, model)).toMatchObject({ connectionId: accounts[1].id });
+    expect(await getProviderCredentials("antigravity", null, "gemini-3.8-flash")).toMatchObject({ connectionId: accounts[0].id });
+
+    seedAntigravityQuotaCache(accounts[0].id, { quotas: {} });
+    expect(await getProviderCredentials("antigravity", null, model)).toMatchObject({ connectionId: accounts[0].id });
+  });
   it("records exhausted upstream quota after 429 and returns its exact reset time", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-26T00:00:00.000Z"));

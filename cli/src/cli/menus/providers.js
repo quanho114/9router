@@ -53,6 +53,11 @@ const PROVIDER_MODELS = {
     { id: "glm-4.7" },
   ],
   ag: [
+    { id: "gemini-4-hydrogen" },
+    { id: "gemini-4-hydrogen-low" },
+    { id: "gemini-4-hydrogen-medium" },
+    { id: "gemini-4-hydrogen-high" },
+    { id: "gemini-4-hydrogen-xhigh" },
     { id: "gemini-3.8-flash-high" },
     { id: "gemini-3.8-flash-medium" },
     { id: "gemini-3.8-flash-low" },

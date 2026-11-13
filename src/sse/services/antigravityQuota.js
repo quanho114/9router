@@ -5,6 +5,7 @@
  */
 
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
+import { getModelUpstreamId } from "open-sse/config/providerModels.js";
 import { getAntigravityUsage } from "open-sse/services/usage/google.js";
 import * as log from "../utils/logger.js";
 
@@ -16,6 +17,7 @@ const lastRefreshAt = new Map();
 const inflightRefresh = new Map();
 
 const MIN_REFRESH_INTERVAL_MS = 30_000; // 30s between refreshes per connection
+const MODEL_ACCESS_RECHECK_MS = 15 * 60_000;
 
 // Strike-based circuit breaker (#3681): Google's quota API can report remaining
 // quota while generation endpoints keep returning 429 (sprint/weekly dual-pool
@@ -74,6 +76,10 @@ export function getAntigravityModelFamily(model) {
   return null;
 }
 
+export function isAntigravityHydrogenModel(model) {
+  return /^(?:[^/]+\/)?gemini-4-hydrogen(?:-(?:low|medium|high|xhigh))?(?:\([^()]+\))?$/.test(model || "");
+}
+
 /**
  * Resolve quota info for a given model from the connection quotas map.
  * Checks direct model entry, tier aliases, and shared family summary buckets
@@ -86,6 +92,14 @@ export function getAntigravityModelQuota(quotas, model) {
     ? (model.includes("/") ? model.slice(model.indexOf("/") + 1) : model).replace(/\([^()]+\)\s*$/, "").trim()
     : "";
 
+  if (isAntigravityHydrogenModel(cleanModel) && quotas._hydrogenDisabledUntil > Date.now()) {
+    return {
+      remainingPercentage: 0,
+      resetAt: new Date(quotas._hydrogenDisabledUntil).toISOString(),
+      unsupported: true,
+    };
+  }
+
   const family = getAntigravityModelFamily(cleanModel);
   const candidates = [];
 
@@ -95,6 +109,10 @@ export function getAntigravityModelQuota(quotas, model) {
   }
 
   // 2. Direct tier aliases if base model was passed
+  if (cleanModel === "gemini-4-hydrogen") {
+    const upstreamModel = getModelUpstreamId("ag", model.split("/").pop()).replace(/\([^()]+\)$/, "");
+    if (quotas[upstreamModel]) candidates.push(quotas[upstreamModel]);
+  }
   if ((cleanModel === "gemini-4-argon" || cleanModel === "argon-4") && quotas["gemini-4-argon-medium"]) {
     candidates.push(quotas["gemini-4-argon-medium"]);
   }
@@ -274,6 +292,12 @@ export function seedAntigravityQuotaCache(connectionId, usage) {
   if (usage.subscriptionInfo && (!paidTierId || paidTierId === "free-tier")) {
     Object.defineProperty(usage.quotas, "_isFreeTier", { value: true, enumerable: false, configurable: true });
   }
+  if (usage.hydrogenDisabled) {
+    Object.defineProperty(usage.quotas, "_hydrogenDisabledUntil", {
+      value: Date.now() + MODEL_ACCESS_RECHECK_MS,
+      configurable: true,
+    });
+  }
   const merged = applyActiveStrikeBlocks(connectionId, usage.quotas);
   quotaCache.set(connectionId, merged);
   lastRefreshAt.set(connectionId, Date.now());
@@ -318,6 +342,7 @@ export async function handleAntigravityQuotaError(connectionId, status, model, a
   // The first 409/429 populates cache; concurrent or repeated errors reuse it.
   const quotas = await refreshAntigravityQuota(connectionId, accessToken, providerSpecificData);
   const quota = getAntigravityModelQuota(quotas, model);
+  if (isAntigravityHydrogenModel(model) && quota?.unsupported) return Date.parse(quota.resetAt);
 
   // Strike breaker: count every 429 whose quota reading is either optimistic
   // (remaining > 0) or unavailable (quota API 403/error). 3 within the window

@@ -30,6 +30,8 @@ export function isFreeModel(model) {
 const ARGON_STANDARD_START = Date.UTC(2026, 11, 1);
 const ARGON_INTRO_PRICING = Object.freeze({ input: 2, output: 10, cached: 0.10, reasoning: 10 });
 const ARGON_STANDARD_PRICING = Object.freeze({ input: 4, output: 20, cached: 0.20, reasoning: 20 });
+// https://aistudio.google.com/docs/pricing#gemini-4-hydrogen
+const HYDROGEN_STANDARD_PRICING = Object.freeze({ input: 1.50, output: 7.50, cached: 0.075, reasoning: 7.50 });
 
 function getArgonPricing() {
   return Date.now() < ARGON_STANDARD_START ? ARGON_INTRO_PRICING : ARGON_STANDARD_PRICING;
@@ -109,6 +111,11 @@ export const MODEL_PRICING = {
   "o1-mini":                      { input: 3.00,  output: 12.00, cached: 1.50,  reasoning: 18.00,  cache_creation: 3.00  },
 
   // === Gemini ===
+  "gemini-4-hydrogen":            HYDROGEN_STANDARD_PRICING,
+  "gemini-4-hydrogen-low":        HYDROGEN_STANDARD_PRICING,
+  "gemini-4-hydrogen-medium":     HYDROGEN_STANDARD_PRICING,
+  "gemini-4-hydrogen-high":       HYDROGEN_STANDARD_PRICING,
+  "gemini-4-hydrogen-xhigh":      HYDROGEN_STANDARD_PRICING,
   "gemini-3.8-flash":              { input: 1.50,  output: 7.50,  cached: 0.15,  reasoning: 11.25,  cache_creation: 1.875 },
   "gemini-3.8-flash-high":         { input: 1.50,  output: 7.50,  cached: 0.15,  reasoning: 11.25,  cache_creation: 1.875 },
   "gemini-3.8-flash-medium":       { input: 1.50,  output: 7.50,  cached: 0.15,  reasoning: 11.25,  cache_creation: 1.875 },

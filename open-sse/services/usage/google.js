@@ -175,6 +175,10 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
         'gemini-4-argon-high',
         'gemini-4-argon-medium',
         'gemini-4-argon-low',
+        'gemini-4-hydrogen-low',
+        'gemini-4-hydrogen-medium',
+        'gemini-4-hydrogen-high',
+        'gemini-4-hydrogen-xhigh',
         'gemini-3.8-flash-high',
         'gemini-3.8-flash-medium',
         'gemini-3.8-flash-low',
@@ -301,6 +305,7 @@ export async function getAntigravityUsage(accessToken, providerSpecificData, pro
       plan: subscriptionInfo?.currentTier?.name || "Unknown",
       quotas,
       subscriptionInfo,
+      hydrogenDisabled: data.models?.["gemini-4-hydrogen-disabled"]?.disabled === true,
     };
   } catch (error) {
     console.error("[Antigravity Usage] Error:", error.message, error.cause);

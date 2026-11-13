@@ -19,6 +19,10 @@ const proxyAwareFetch = vi.fn(async (url) => ({
             displayName: "Gemini 3.8 Flash (Low)",
             quotaInfo: { remainingFraction: 0.35, resetTime: "2026-08-25T12:00:00Z" },
           },
+          "gemini-4-hydrogen-xhigh": {
+            displayName: "Gemini 4 Hydrogen (XHigh)",
+            quotaInfo: { remainingFraction: 0.45, resetTime: "2026-08-25T12:00:00Z" },
+          },
           "internal-model": {
             displayName: "Internal",
             isInternal: true,
@@ -57,5 +61,21 @@ describe("Antigravity quota tracker: Gemini 3.8 Flash usage bars", () => {
       total: 1000,
       remainingPercentage: 35,
     });
+  });
+
+  it("tracks Hydrogen quota and distinguishes Google’s disabled catalog entry", async () => {
+    const { getAntigravityUsage } = await import("../../open-sse/services/usage/google.js");
+    const enabled = await getAntigravityUsage("access-token", {});
+    expect(enabled.hydrogenDisabled).toBe(false);
+    expect(enabled.quotas["gemini-4-hydrogen-xhigh"]).toMatchObject({ remainingPercentage: 45 });
+
+    proxyAwareFetch.mockImplementationOnce(async () => ({ ok: false, status: 403 }));
+    proxyAwareFetch.mockImplementationOnce(async () => ({
+      ok: true,
+      json: async () => ({ models: { "gemini-4-hydrogen-disabled": { disabled: true } } }),
+    }));
+    const disabled = await getAntigravityUsage("access-token", {});
+    expect(disabled.hydrogenDisabled).toBe(true);
+    expect(disabled.quotas).not.toHaveProperty("gemini-4-hydrogen-disabled");
   });
 });
