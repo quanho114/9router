@@ -8,6 +8,7 @@ import { cn } from "@/shared/utils/cn";
 import { APP_CONFIG } from "@/shared/constants/config";
 import { MEDIA_PROVIDER_KINDS } from "@/shared/constants/providers";
 import useSettingsStore from "@/store/settingsStore";
+import LiveCallsBell from "./LiveCallsBell";
 
 // const VISIBLE_MEDIA_KINDS = ["embedding", "image", "imageToText", "tts", "stt", "webSearch", "webFetch", "video", "music"];
 const VISIBLE_MEDIA_KINDS = ["embedding", "image", "video", "tts", "stt", "systemone"];
@@ -92,6 +93,7 @@ export default function Sidebar({ onClose, onCollapse, onNavigate, activePathnam
             <rect x="3" y="4.5" width="18" height="15" rx="2.5" /><path d="M9 4.5v15" />
           </svg>
         </button>
+        <LiveCallsBell compact onNavigate={onNavigate} onCloseSidebar={onClose} />
         <nav aria-label="Main navigation" className="flex flex-1 min-h-0 w-full flex-col items-center gap-1 overflow-y-auto custom-scrollbar py-1">
           {compactItems.map(compactLink)}
         </nav>
@@ -133,13 +135,13 @@ export default function Sidebar({ onClose, onCollapse, onNavigate, activePathnam
         </div>
 
         {/* Brand Identity */}
-        <div className="px-6 py-4 flex flex-col gap-2.5">
-          <Link href="/dashboard" prefetch={true} onClick={(e) => handleLinkClick(e, "/dashboard")} className="flex items-center gap-3.5 group">
-            <div className="flex items-center justify-center size-10 rounded-[12px] group-hover:scale-[1.03] transition-transform duration-200">
+        <div className="px-6 py-4 flex items-center justify-between gap-2">
+          <Link href="/dashboard" prefetch={true} onClick={(e) => handleLinkClick(e, "/dashboard")} className="flex items-center gap-3.5 group min-w-0">
+            <div className="flex items-center justify-center size-10 shrink-0 rounded-[12px] group-hover:scale-[1.03] transition-transform duration-200">
               <img src="/logo.svg" alt="" className="size-9" />
             </div>
-            <div className="flex flex-col">
-              <h1 className="text-[17px] font-semibold tracking-tight text-text-main leading-tight">
+            <div className="flex flex-col min-w-0">
+              <h1 className="text-[17px] font-semibold tracking-tight text-text-main leading-tight truncate">
                 {APP_CONFIG.name}
               </h1>
               <span className="text-[11px] font-medium text-text-muted/85">
@@ -147,6 +149,7 @@ export default function Sidebar({ onClose, onCollapse, onNavigate, activePathnam
               </span>
             </div>
           </Link>
+          <LiveCallsBell onNavigate={onNavigate} onCloseSidebar={onClose} />
         </div>
 
         {/* Navigation */}

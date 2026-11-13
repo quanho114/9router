@@ -49,6 +49,7 @@ export { default as ProviderInfoCard } from "./ProviderInfoCard";
 export { default as ProviderIcon } from "./ProviderIcon";
 export { default as CapacityBadges } from "./CapacityBadges";
 export { default as SmartPolicyModal } from "./SmartPolicyModal";
+export { default as LiveCallsBell } from "./LiveCallsBell";
 
 // Layouts
 export * from "./layouts";
